@@ -84,10 +84,14 @@ contains
     integer            :: frictionSpringId, frictionSetId
     integer            :: followerTriad, contactSurface, saveVar(4)
     real(dp)           :: thickness, width, radius
+    real(dp)           :: pipeRadius, outerPipeRadius
+    real(dp)           :: hydroFricCoeff, skinFricCoeff, radFricCoeff
 
     namelist /CONTACT_ELEMENT/ type, extDescr, id, extId, springId, damperId, &
          &                     frictionSpringId, frictionSetId, &
          &                     followerTriad, contactSurface, &
+         &                     pipeRadius, outerPipeRadius, &
+         &                     hydroFricCoeff, skinFricCoeff, radFricCoeff, &
          &                     thickness, width, radius, saveVar
 
     !! --- Logic section ---
@@ -126,6 +130,8 @@ contains
        springId=0; damperId=0; frictionSpringId=0; frictionSetId=0
        followerTriad=0; contactSurface=0; saveVar=0
        thickness=-1.0_dp; width=-1.0_dp; radius=-1.0_dp
+       pipeRadius=0.0_dp; outerPipeRadius=0.0_dp
+       hydroFricCoeff=0.0_dp; skinFricCoeff=0.0_dp; radFricCoeff=0.0_dp
 
        read(infp,nml=CONTACT_ELEMENT,iostat=stat)
        if (stat /= 0) then
@@ -138,6 +144,11 @@ contains
        cElems(idIn)%thickness = thickness
        cElems(idIn)%width     = width
        cElems(idIn)%radius    = radius
+       cElems(idIn)%pipeRadius = pipeRadius
+       cElems(idIn)%outerPipeRadius = outerPipeRadius
+       cElems(idIn)%hydroFricCoeff = hydroFricCoeff
+       cElems(idIn)%skinFricCoeff = skinFricCoeff
+       cElems(idIn)%radFricCoeff = radFricCoeff
        ignoreElm = .false.
 
        !! Initialize springs and dampers

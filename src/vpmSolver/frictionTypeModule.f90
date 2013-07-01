@@ -75,6 +75,7 @@ module FrictionTypeModule
      real(dp) :: force      !! Current force
      real(dp) :: forcePrevIt ! Force at previous iteration
      real(dp) :: dF         !! Change in force between last two iterations
+     real(dp) :: dFPrevIt   !! Change in force between last two iterations at previous iteration
      real(dp) :: stiff      !! Relative change in friction force wrt. velocity
 
      real(dp) :: pos        !! Current position
@@ -84,6 +85,14 @@ module FrictionTypeModule
      real(dp) :: vel        !! Current velocity
      real(dp) :: vel0       !! Velocity at start of timestep
      real(dp) :: velPrevIt  !! Velocity at previous iteration
+
+     real(dp) :: velZ       !! Current velocity for z-component
+     real(dp) :: velZ0      !! Velocity at start of timestep
+     real(dp) :: velZPrevIt !! Velocity at previous iteration
+
+     real(dp) :: velY       !! Current velocity for z-component
+     real(dp) :: velY0      !! Velocity at start of timestep
+     real(dp) :: velYPrevIt !! Velocity at previous iteration
 
      real(dp) :: forcePrev  !! Force at the end of last time step
      real(dp) :: posPrev    !! Position at the end of last time step
@@ -245,12 +254,19 @@ contains
     friction%force       = 0.0_dp
     friction%forcePrevIt = 0.0_dp
     friction%dF          = 0.0_dp
+    friction%dFPrevIt    = 0.0_dp
     friction%pos         = 0.0_dp
     friction%pos0        = 0.0_dp
     friction%posPrevIt   = 0.0_dp
     friction%vel         = 0.0_dp
     friction%vel0        = 0.0_dp
     friction%velPrevIt   = 0.0_dp
+    friction%velZ        = 0.0_dp
+    friction%velZ0       = 0.0_dp
+    friction%velZPrevIt  = 0.0_dp
+    friction%velY        = 0.0_dp
+    friction%velY0       = 0.0_dp
+    friction%velYPrevIt  = 0.0_dp
     friction%stiff       = 0.0_dp
     friction%forcePrev   = 0.0_dp
     friction%posPrev     = 0.0_dp
@@ -351,6 +367,8 @@ contains
     friction%pos0  = friction%pos
     friction%posPrevIt = friction%pos
     friction%velPrevIt = friction%vel
+    friction%velY0 = friction%velY
+    friction%velZ0 = friction%velZ
 
   end subroutine UpdateFrictionAtStart
 
@@ -372,6 +390,8 @@ contains
 
     friction%lInit = 1
     friction%pos0  = friction%pos
+    friction%velZ0 = friction%velZ
+    friction%velY0 = friction%velY
 
     if (associated(friction%spr)) then
 

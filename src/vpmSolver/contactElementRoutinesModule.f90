@@ -486,6 +486,71 @@ contains
 
 
   !!============================================================================
+  !> @brief Calculates the force vector contributions from DrillSim frictions.
+  !>
+  !> @param[in] cElem The contact element to calculate forces for
+  !> @param[out] forceInG Friction forces in global coordinates
+  !> @param[out] mom1InG Friction moment in slave in global coordinates
+  !> @param[out] mon2InG Friction moment in master global coordinates
+  !>
+  !> @callergraph
+  !>
+  !> @author Knut Morten Okstad
+  !>
+  !> @date Jan 2016
+
+  subroutine getDrillSimFrictionForce (cElem,forceInG,mom1InG,mom2InG)
+
+    use manipMatrixModule, only : cross_product
+
+    type(ContactElementType), intent(in)  :: cElem
+    real(dp)                , intent(out) :: forceInG(3), mom1InG(3), mom2InG(3)
+
+    !! Local variables
+    real(dp) :: ratioY, ratioZ, Fy, Fz, vecLen, vecFromCenter(3)
+
+    !! --- Logic section ---
+
+    ratioY = abs(cElem%friction%velY/cElem%friction%vel)
+    ratioZ = abs(cElem%friction%velZ/cElem%friction%vel)
+
+    !!if (ratioY+ratioZ > 0.0_dp) then
+    !!   ratioZ = ratioZ*(1.0_dp/(ratioY+ratioZ))
+    !!   ratioY = ratioY*(1.0_dp/(ratioY+ratioZ))
+    !!end if
+    !!if (ratioY + ratioZ > 1.0_dp) then
+    !!   if (ratioY > ratioZ) then
+    !!      ratioZ = 0.0_dp
+    !!   else
+    !!      ratioY = 0.0_dp
+    !!   end if
+    !!end if
+
+    Fy = -sign(cElem%friction%force,cElem%friction%velY0)*ratioY;
+    Fz = -sign(cElem%friction%force,cElem%friction%velZ0)*ratioZ;
+
+    forceInG = Fy*cElem%CPosInG(:,2) + Fz*cElem%CPosInG(:,3)
+
+    !! Moment = (tangential friction force)*arm
+    !! Create unit vector from master to slave and scale by pipe radius
+    vecLen = sqrt(dot_product(cElem%eVec(:,2),cElem%eVec(:,2)))
+    if (vecLen > 0.005_dp) then
+       vecFromCenter = (-cElem%pipeRadius/vecLen)*cElem%eVec(:,2)
+       mom1InG = cross_product(vecFromCenter,forceInG)
+       vecFromCenter = (-cElem%outerPipeRadius/vecLen)*cElem%eVec(:,2)
+       mom2InG = cross_product(vecFromCenter,forceInG)
+    else
+       mom1InG = 0.0_dp
+       mom2InG = 0.0_dp
+    end if
+
+    !! Skin friction = koeff*(rotational speed)
+    mom1InG(3) = mom1InG(3) - cElem%skinFricCoeff * cElem%cVar(6,2)
+
+  end subroutine getDrillSimFrictionForce
+
+
+  !!============================================================================
   !> @brief Calculates system force vector terms from a contact element.
   !>
   !> @param F System right-hand-side vector
@@ -525,7 +590,7 @@ contains
 
     !! Local variables
     integer           :: i, j, ip, nDOFs, nDOFm, err
-    logical           :: hasForce(3), fricOnly, fricFromSpring
+    logical           :: hasForce(3), fricOnly, fricFromSpring, drillSim
     real(dp)          :: forceInG(3), momInG(3), momM(3), momS(3), fFull(6)
     real(dp), pointer :: eV(:)
 #ifdef FT_DEBUG
@@ -540,6 +605,7 @@ contains
     momInG   = 0.0_dp
     hasForce = .false.
     fricOnly = .true.
+    drillSim = .false.
 
     fricFromSpring = .false.
     if (associated(cElem%friction)) then
@@ -607,7 +673,12 @@ contains
           !! The friction routines calculate the friction force to be positive
           !! for positive velocity, but since it is resisting motion it should
           !! have a negative value here, when added to the external force vector
-          if (fricOnly) then
+          if (cElem%pipeRadius > 0.0_dp) then
+             !! DrillSim friction forces
+             if (.not. fricOnly) goto 900 ! Not supported
+             call getDrillSimFrictionForce (cElem,forceInG,momS,momM)
+             drillSim = .true.
+          else if (fricOnly) then
              forceInG = -cElem%friction%force * cElem%CPosInG(:,3)
           else
              forceInG = forceInG + cElem%friction%force * cElem%CPosInG(:,3)
@@ -633,12 +704,14 @@ contains
     !!    | Fm | = |    I    :  0 || F |
     !!    | Mm |   | Spin(e) :  I || M |
 
-    if (ignoreEccF) then
-       momM = momInG
-       momS = momInG
-    else
-       momM = momInG + cross_product(cElem%eVec(:,1),forceInG)
-       momS = momInG + cross_product(cElem%eVec(:,2),forceInG)
+    if (.not. drillSim) then
+       if (ignoreEccF) then
+          momM = momInG
+          momS = momInG
+       else
+          momM = momInG + cross_product(cElem%eVec(:,1),forceInG)
+          momS = momInG + cross_product(cElem%eVec(:,2),forceInG)
+       end if
     end if
 
     !! Add contribution to triad1 (follower)
@@ -733,7 +806,7 @@ contains
        if (cElems(i)%lastDomain < 1) cycle ! Ignore this contact element
 
 #ifdef FT_DEBUG
-       if (size(cElems) < 4 .or. cElems(i)%id%userId == -iprint) then
+       if (size(cElems) < 5 .or. cElems(i)%id%userId == -iprint) then
           dbgCurve = getDBGfile(7,'contactCurve.dbg')
        else
           dbgCurve = 0
@@ -1151,6 +1224,8 @@ contains
     nDOFs  = cElem%triad1%nDOFs
     if (nDOFs > 0) then
        velVec(1:nDOFs) = cElem%triad1%urd
+       cElem%slaveAbsVel(1:3) =  matmul(velVec(1:3),cElem%CPosInG(:,1:3))
+       cElem%slaveAbsVel(4:6) =  matmul(velVec(4:6),cElem%CPosInG(:,1:3))
     end if
     nDOFs = CP1%triad%nDOFs
     if (nDOFs > 0) then

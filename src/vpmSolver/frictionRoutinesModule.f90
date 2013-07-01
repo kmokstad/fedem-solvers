@@ -132,6 +132,7 @@ contains
 
     integer  :: i, j, k, fricType
     real(dp) :: a, R, Y, RF(6), RFX1, RFY1, RFX2, RFY2, RFA, RFR
+    real(dp) :: VelZ, VelY
 
     !! --- Logic section ---
 
@@ -182,7 +183,23 @@ contains
 
        friction%posPrev = cElem%cVarPrev(3) ! Bugfix #392
        friction%pos = cElem%cVar(3,1)
-       friction%vel = cElem%cVar(3,2)
+
+       if (cElem%pipeRadius > 0.0_dp) then ! 2-DOF friction, DrillSim
+          friction%velZPrevIt = friction%velZ
+          friction%velYPrevIt = friction%velY
+
+          !! Translational velocity in center + tangential velocity
+          !!VelY = cElem%cVar(2,2) + cElem%pipeRadius*cElem%cVar(6,2)
+          VelY = cElem%cVar(2,2) + cElem%pipeRadius*cElem%slaveAbsVel(6) &
+               - cElem%outerPipeRadius*(cElem%slaveAbsVel(6) - cElem%cVar(6,2))
+          velZ = cElem%cVar(3,2) - cElem%pipeRadius*cElem%cVar(5,2)
+
+          friction%velY = VelY
+          friction%velZ = VelZ
+          friction%vel  = SQRT(VelY*VelY + VelZ*VelZ)
+       else
+          friction%vel = cElem%cVar(3,2)
+       end if
 
     end if
 
@@ -280,13 +297,28 @@ contains
        return
     end select
 
-    call FindMaxFrictionForce (friction%Fmax, friction%Fequ, friction%Fext, &
-         &                     friction%vel, friction%lSlip(1), &
-         &                     friction%param%PrestressLoad, &
-         &                     friction%param%CoulombCoeff, &
-         &                     friction%param%StribeckMagn, &
-         &                     friction%param%StribeckSpeed)
+    if (cElem%pipeRadius > 0.0_dp) then ! 2-DOF friction (DrillSim)
 
+       call FindMaxFrictionForce2D (friction%Fmax, friction%Fequ, friction%Fext, &
+            &                       friction%vel, friction%lSlip(1), &
+            &                       friction%param%PrestressLoad, &
+            &                       friction%param%CoulombCoeff, &
+            &                       friction%param%StribeckMagn, &
+            &                       friction%param%StribeckSpeed, &
+            &                       cElem%hydroFricCoeff, &
+            &                       cElem%radFricCoeff, &
+            &                       VelY, VelZ)
+
+    else
+
+       call FindMaxFrictionForce (friction%Fmax, friction%Fequ, friction%Fext, &
+            &                     friction%vel, friction%lSlip(1), &
+            &                     friction%param%PrestressLoad, &
+            &                     friction%param%CoulombCoeff, &
+            &                     friction%param%StribeckMagn, &
+            &                     friction%param%StribeckSpeed)
+
+    end if
     if (associated(friction%spr)) then ! Spring-based friction model
 
        !bh: probably better to do this only at the end of the step?
@@ -299,6 +331,18 @@ contains
     else if (friction%lInit == 2) then
 
        call UpdateFrictionAtStart (friction)
+
+    else if (cElem%pipeRadius > 0.0_dp) then ! 2-DOF friction (DrillSim)
+
+       call FindFrictionForce2D (friction%force, friction%stiff, &
+            &                    friction%posPrevIt, friction%velPrevIt, &
+            &                    friction%forcePrevIt, friction%df, &
+            &                    friction%lSlip(2), friction%lInit, dt, &
+            &                    friction%Fmax, friction%Fext, fricForceTol, &
+            &                    friction%pos, friction%vel, &
+            &                    friction%velZPrevIt, friction%velZ, friction%velZ0, &
+            &                    friction%velYPrevIt, friction%velY, friction%velY0, &
+            &                    friction%dFPrevIt)
 
     else
 
@@ -529,6 +573,76 @@ contains
   end subroutine FindMaxFrictionForce
 
 
+  subroutine FindMaxFrictionForce2D (Fmax, Fequ, Fext, Vel, StickSlip, &
+       &                             F0, Coulomb, Stribeck, Vc, &
+       &                             HydroFricCoeff, RadFricCoeff, VelY, VelZ)
+
+    !!==========================================================================
+    !! Calculates the maximum friction force, for 2-dof friction.
+    !!
+    !! Programmer: Runar Refsnæs                               date: 01 Jul 2013
+    !!==========================================================================
+
+    use kindModule            , only : dp, epsDiv0_p
+    use FFaCmdLineArgInterface, only : ffa_cmdlinearg_getint
+
+    real(dp), intent(out)   :: Fmax
+    integer , intent(inout) :: StickSlip
+    real(dp), intent(in)    :: Fequ, Fext, Vel, F0, Coulomb, Stribeck, Vc
+    real(dp), intent(in)    :: HydroFricCoeff, RadFricCoeff, VelZ, VelY
+
+    !! Local variables
+    integer  :: fricForm
+    real(dp) :: VelSgn, VelRat, TolMin, TolMax, Rvel, Strb, ActiveHydroFric
+
+    !! --- Logic section ---
+
+    VelSgn = sign(1.0_dp,Vel)
+    TolMin = 0.1_dp*Vc
+    TolMax = 2.5_dp*Vc
+
+    call ffa_cmdlinearg_getint('fricForm',fricForm)
+
+    !! Stick-slip or sliding and hysteresis effect
+
+    if (Vc < epsDiv0_p) then
+       StickSlip = 0 ! Stick-slip
+    else if (abs(Vel) < TolMin .and. fricForm < 10) then
+       StickSlip = 0 ! Stick-slip
+    else if (abs(Vel) > TolMax) then
+       StickSlip = int(VelSgn) ! Sliding
+    end if
+
+    if (Vel*StickSlip < 0.0_dp .and. fricForm < 10) StickSlip = 0 ! Hysteresis
+
+    !! If no normal-force is present, make hydrodynamic friction inactive.
+    !! Could possibly do check on minimum distance to contact surface.
+    if (Fequ < epsDiv0_p) then
+       ActiveHydroFric = 0.0_dp
+    else
+       ActiveHydroFric = HydroFricCoeff
+    end if
+
+    VelRat = sqrt((Coulomb*VelZ)**2.0_dp + (RadFricCoeff*VelY)**2.0_dp)/abs(Vel)
+    if (StickSlip == 0 .and. abs(Vel) < 10.0_dp*Vc) then
+       !! Stick-slip
+       Rvel = Vel/Vc
+       Strb = 1.0_dp + Stribeck*exp(-Rvel*Rvel)
+       if (mod(fricForm,10) > 1) then
+          !! Let the applied force determine the direction of the friction force
+          !! when the velocity is smaller than the stick threshold
+          Fmax = ( F0 + Fequ*Strb*VelRat + ActiveHydroFric )* sign(1.0_dp,Fext)
+       else
+          Fmax = ( F0 + Fequ*Strb*VelRat + ActiveHydroFric )*VelSgn
+       end if
+    else
+       !! Sliding
+       Fmax = ( F0 + Fequ*VelRat + ActiveHydroFric )*VelSgn
+    end if
+
+  end subroutine FindMaxFrictionForce2D
+
+
   subroutine FindFrictionForce (Ffric, Kfric, Xn_1, Vn_1, Fold, dF, &
        &                        lStick, lInit, dT, Fmax, Fext, Ftol, X0, Xn, Vn)
 
@@ -648,6 +762,99 @@ contains
     Fold = Ffric
 
   end subroutine FindFrictionForce
+
+
+  subroutine FindFrictionForce2D (Ffric, Kfric, Xn_1, Vn_1, Fold, dF, &
+       &                          lStick, lInit, dT, Fmax, Fext, Ftol, &
+       &                          Xn, Vn, VelZPrevIt, VelZ, VelZ0, &
+       &                          VelYPrevIt, VelY, VelY0, dFold)
+
+    !!==========================================================================
+    !! Calculates the actual friction force, for 2-dof friction.
+    !!
+    !! Programmer: Runar Refsnæs                               date: 01 Jul 2013
+    !!==========================================================================
+
+    use kindModule            , only : dp, epsDiv0_p
+    use FFaCmdLineArgInterface, only : ffa_cmdlinearg_intValue
+
+    real(dp), intent(out)   :: Ffric
+    integer , intent(inout) :: lStick, lInit
+    real(dp), intent(inout) :: Kfric, Xn_1, Vn_1, Fold, dF
+    real(dp), intent(inout) :: VelZPrevIt, VelYPrevIt, dFold
+    real(dp), intent(in)    :: dT, Fmax, Fext, Ftol, Xn, Vn
+    real(dp), intent(in)    :: VelZ, VelY, VelY0, VelZ0
+
+    !! Local variables
+    real(dp)            :: epsFr, Vel02, Vel12
+    real(dp), parameter :: epsVel_p = 0.00001_dp
+
+    !! --- Logic section ---
+
+    !! Calculation of friction force needed to prevent movement (stick)
+    if (lInit > 0) then
+       !! Initialising at the beginning of each time step
+       lInit = 0
+       if (lStick > 0) lStick = 2 ! previous time step was sliding
+
+       if (mod(ffa_cmdlinearg_intValue('fricForm'),2) == 1) then
+          epsFr = 0.0001_dp/min(max(dT,0.0001_dp),1.0_dp)
+       else
+          epsFr = 0.001_dp
+       end if
+       Ffric = Fold + epsFr*Fold
+
+    else if ( abs(VelY-VelYPrevIt) > epsVel_p .or. &
+         &    abs(VelZ-VelZPrevIt) > epsVel_p ) then
+       !! During iterations, search for friction force that gives zero velocity.
+       !! This is the condition for "stick" force.
+       Vel02 = VelY0*VelY0 + VelZ0*VelZ0
+       Vel12 = VelY *VelY0 + VelZ *VelZ0
+       if (abs(dF) > epsDiv0_p .and. Vel02 > epsDiv0_p) then
+          Kfric = dF/( sqrt(Vel02)*(Vel12/Vel02 - 1.0_dp) )
+          Ffric = Fold + sign(Kfric,Vel12) * Vn
+       else if (abs(Fold) < epsDiv0_p .and. abs(Vn) > epsDiv0_p) then
+          Ffric = 0.1_dp*Fmax
+       else
+          Ffric = Fold + sign(Kfric,Vel12) * Vn
+       end if
+
+    else ! No position change in this iteration
+       Ffric = Fold
+    end if
+
+    if (lStick == 2) then
+       !! Don't stick if the velocity has not been zero
+       if ( VelZ*VelZ0 + VelY*VelY0 >= 0.0_dp .or. &
+            ffa_cmdlinearg_intValue('fricForm') >= 10) then
+          Ffric = Fmax
+       else
+          lStick = 0 ! stick detected
+       end if
+
+    end if
+
+    !! Stick-slip or sliding movement
+    if (abs(Ffric) >= abs(Fmax)) then
+       Ffric = sign(Fmax,Ffric)
+       if (lStick == 0) then
+          lStick = 1 ! slip detected
+       end if
+    else if (abs(Fext) < Ftol .and. lStick == 0) then
+       Ffric = 0.0_dp
+    end if
+
+    !!if (abs(dF + dFold) < 0.005_dp .and. abs(dF) > epsDiv0_p) then
+    !!   Ffric = 0.0_dp
+    !!end if
+
+    Xn_1 = Xn
+    Vn_1 = Vn
+    dFold = dF
+    dF   = Ffric - Fold
+    Fold = Ffric
+
+  end subroutine FindFrictionForce2D
 
 
   subroutine addInFrictionForces (joint, sam, SysForce, SysReac, ierr)

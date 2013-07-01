@@ -46,8 +46,14 @@ module ContactElementTypeModule
      real(dp) :: radius         !< Contact surface radius (radial contact)
      real(dp) :: FPosInT(3,4)   !< Relative follower position
      real(dp) :: cVar(6,2)      !< Movement of follower w.r.t. contact curve
+     real(dp) :: slaveAbsVel(6) !< Follower triads absolute velocity in relative coords.
      real(dp) :: cVarPrev(3)    !< Contact variables at previous time step
      real(dp) :: accContactDist !< Accumulated sliding while in contact
+     real(dp) :: pipeRadius     !< Radius for inner-pipe in pipe-in-pipe contact
+     real(dp) :: outerPipeRadius!< Radius for outer-pipe in pipe-in-pipe contact
+     real(dp) :: hydroFricCoeff !< Coefficient for hydrodynamic friction
+     real(dp) :: skinFricCoeff  !< Coefficient for skin friction
+     real(dp) :: radFricCoeff   !< Coefficient for radial cam-friction
      logical  :: saveVar(2)     !< Flags indicating variables to be saved
 
      logical  :: wasActive  !< Indicates whether follower was in contact
@@ -253,6 +259,11 @@ contains
     contElem%cVar = 0.0_dp
     contElem%cVarPrev = 0.0_dp
     contElem%accContactDist = 0.0_dp
+    contElem%pipeRadius = 0.0_dp
+    contElem%outerPipeRadius = 0.0_dp
+    contElem%hydroFricCoeff = 0.0_dp
+    contElem%skinFricCoeff = 0.0_dp
+    contElem%radFricCoeff = 0.0_dp
     contElem%saveVar = .false.
 
     contElem%wasActive = .false.
