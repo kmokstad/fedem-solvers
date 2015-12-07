@@ -883,7 +883,7 @@ contains
   !> @details If @b A is not square, the greatest possible square matrix will be
   !> unified and the rest will be zeroed.
 
-  subroutine unify (A)
+  pure subroutine unify (A)
 
     use KindModule, only : dp
 

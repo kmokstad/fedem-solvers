@@ -228,7 +228,8 @@ contains
 
   pure subroutine NullifyContactElement (contElem)
 
-    use IdTypeModule, only : nullifyId
+    use IdTypeModule     , only : nullifyId
+    use manipMatrixModule, only : unify
 
     type(ContactElementType), intent(out) :: contElem
 
@@ -272,7 +273,7 @@ contains
     contElem%lastDomain = 0
 
     contElem%coeff = 0.0_dp
-    contElem%FPosInT = 0.0_dp
+    call unify (contElem%FPosInT)
     contElem%CPosInG = 0.0_dp
     contElem%eVec = 0.0_dp
 
