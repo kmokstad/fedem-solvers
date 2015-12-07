@@ -488,6 +488,7 @@ DLLexport(int) solverInit (int argc, char** argv, const char* cfsi,
   ADD_PRIVATE_OPTION ("nFricSkipStatic",0,"Number of friction calculation skips in quasi-static stage");
   ADD_PRIVATE_OPTION ("nFricVelUpdateSkip",0,"Number of friction velocity update skips");
   ADD_PRIVATE_OPTION ("tolFricForce",0.0,"Relative friction force tolerance");
+  ADD_PRIVATE_OPTION ("timeFricStart",0.0,"Start time for friction calculation");
   ADD_PRIVATE_OPTION ("fricForm",1,"Friction formulation"
                       "\n= 0 : Original"
                       "\n= 1 : Use time-step dependent predictor"

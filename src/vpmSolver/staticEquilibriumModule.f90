@@ -1049,7 +1049,7 @@ contains
        !! Frictions are updated after all triad force contributions have been
        !! computed. Superelements, axial springs, external forces,
        !! additional masses and tires might have such contributions.
-       call updateFrictions (mech%joints,mech%cElems,sys%timeStep, &
+       call updateFrictions (mech%joints,mech%cElems,sys%time,sys%timeStep, &
             &                sys%nIterThisStep,doFrictions,ierr)
     end if
 

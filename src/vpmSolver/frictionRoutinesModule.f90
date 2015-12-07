@@ -21,7 +21,7 @@ module FrictionRoutinesModule
 
 contains
 
-  subroutine updateFrictions (joints, cElems, dt, iter, useRealVel, ierr)
+  subroutine updateFrictions (joints, cElems, time, dt, iter, useRealVel, ierr)
 
     !!==========================================================================
     !! Updates the friction forces in all joints and contact elements.
@@ -34,10 +34,11 @@ contains
     use ContactElementTypeModule  , only : ContactElementType
     use reportErrorModule         , only : reportError, debugFileOnly_p
     use FFaCmdLineArgInterface    , only : ffa_cmdlinearg_intValue
+    use FFaCmdLineArgInterface    , only : ffa_cmdlinearg_doubleValue
 
     type(MasterSlaveJointType), intent(inout) :: joints(:)
     type(ContactElementType)  , intent(inout) :: cElems(:)
-    real(dp)                  , intent(in)    :: dt
+    real(dp)                  , intent(in)    :: time, dt
     integer                   , intent(in)    :: iter
     logical                   , intent(in)    :: useRealVel
     integer                   , intent(inout) :: ierr
@@ -49,6 +50,8 @@ contains
     !! --- Logic section ---
 
     if (iter < ffa_cmdlinearg_intValue('nFricSkip')) then
+       return
+    else if (time < ffa_cmdlinearg_doubleValue('timeFricStart')) then
        return
     else if (.not. useRealVel) then
        deltaT = dt ! Compute velocity based on position increment
