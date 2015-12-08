@@ -155,6 +155,7 @@ module SupElTypeModule
 
      real(dp), pointer :: scoord !< Running coordinate along beams
      real(dp), pointer :: EI(:)  !< Bending stiffness for beams
+     real(dp), pointer :: M0(:)  !< Prebending moments for 1D beams
 
      real(dp), pointer :: Nmat(:,:)  !< Newton matrix
      real(dp), pointer :: Mmat(:,:)  !< Structural mass matrix
@@ -346,6 +347,9 @@ contains
     end if
     if (associated(sup%EI)) then
        write(io,3) 'EIy,EIz       =', sup%EI
+    end if
+    if (associated(sup%M0)) then
+       write(io,*) 'My0,Mz0       =', sup%M0
     end if
 
     write(io,*) 'addedMass?    =', sup%addedMass
@@ -706,6 +710,7 @@ contains
     nullify(sup%rcy)
     nullify(sup%scoord)
     nullify(sup%EI)
+    nullify(sup%M0)
 
   end subroutine NullifySupEl
 

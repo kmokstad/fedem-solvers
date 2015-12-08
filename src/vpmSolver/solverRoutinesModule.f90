@@ -617,7 +617,7 @@ contains
        end if
     end if
 
-    call updateBeamSectionForces (mech%sups,ierr)
+    call updateBeamSectionForces (mech%sups,.false.,0,ierr)
     if (ierr < 0) goto 900
 
     call updateEnginesForSave (mech%engines,2,ierr)

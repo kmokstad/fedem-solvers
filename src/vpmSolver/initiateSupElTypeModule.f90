@@ -81,7 +81,7 @@ contains
     logical :: allPri, allSec, allRest, allSupel
     logical :: allCG, allHD, allGenDOF, allEnergy
     logical :: centripForceCorrIsOn(3), stressStiffIsOn(3)
-    logical :: scaledStructDamp, scaleD, haveDamping(0:2), hasScaling
+    logical :: scaledStructDamp, calcPrebend, scaleD, haveDamping(0:2), hasScaling
     real(dp) :: oMassScale, oMassDmp, oStiffDmp, glbAlpha1, glbAlpha2, stopGD
     real(dp), parameter :: eps_p = 1.0e-16_dp
     type(BeamPropertyType), pointer :: beamProp(:), bProp
@@ -122,6 +122,7 @@ contains
     call ffa_cmdlinearg_getbool ('stressStiffDyn',stressStiffIsOn(1))
     call ffa_cmdlinearg_getbool ('stressStiffEqu',stressStiffIsOn(2))
     call ffa_cmdlinearg_getbool ('stressStiffEig',stressStiffIsOn(3))
+    call ffa_cmdlinearg_getbool ('prebendBeam',calcPrebend)
 
     call ffa_cmdlinearg_getdouble ('alpha1',glbAlpha1)
     call ffa_cmdlinearg_getdouble ('alpha2',glbAlpha2)
@@ -526,6 +527,14 @@ contains
                 end if
              end if
              call CalcElementMatrices (sups(idIn),bProp,env,stat)
+             if (stat == 0 .and. calcPrebend) then
+                allocate(sups(idIn)%M0(2), STAT=stat)
+                if (stat /= 0) then
+                   err = AllocationError('ReadSupEls 7')
+                   return
+                end if
+                sups(idIn)%M0 = 0.0_dp
+             end if
           else
              call ReportInputError('SUP_EL',idIn,sups(idIn)%id, &
                   'Non-existing beam element property referred')

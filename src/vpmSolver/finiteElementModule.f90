@@ -1176,6 +1176,8 @@ contains
   !> @brief Calculates the current beam sectional forces.
   !>
   !> @param sups All superelements in the model
+  !> @param[in] prebend If .true., calculate prebending moments
+  !> @param[in] lpu File unit number for res-file output
   !> @param[out] ierr Error flag
   !>
   !> @details The running curve coordinate along the beams is alos updated.
@@ -1188,7 +1190,7 @@ contains
   !>
   !> @date 14 Dec 2012
 
-  subroutine updateBeamSectionForces (sups,ierr)
+  subroutine updateBeamSectionForces (sups,prebend,lpu,ierr)
 
     use kindModule            , only : epsDiv0_p
     use SupElTypeModule       , only : IsBeam
@@ -1199,6 +1201,8 @@ contains
     use FFaCmdLineArgInterface, only : ffa_cmdlinearg_getbool
 
     type(SupElType), intent(inout) :: sups(:)
+    logical        , intent(in)    :: prebend
+    integer        , intent(in)    :: lpu
     integer        , intent(out)   :: ierr
 
     !! Local variables
@@ -1257,13 +1261,13 @@ contains
           end if
           p2%scoord = p1%scoord + dl
           current%elm(i)%p%scoord = p1%scoord + 0.5_dp*dl
-          if (associated(p1%supForce) .and. p1%isFEnode) then
+          if (.not.prebend .and. p1%isFEnode .and. associated(p1%supForce)) then
              p1%supForce = -GetSectionalForces(current%elm(i)%p,n1)
           end if
           p3 => p1
           p4 => p2
        end do
-       if (associated(p2%supForce) .and. p2%isFEnode) then
+       if (.not.prebend .and. p2%isFEnode .and. associated(p2%supForce)) then
           n1 = 3 - n1
           p2%supForce = GetSectionalForces(current%elm(size(current%elm))%p,n1)
        end if
@@ -1361,20 +1365,47 @@ contains
              Trot(3,:) = cross_product(Trot(1,:),S)
              Trot = matmul(matmul(Tcrv,Trot),current%elm(i)%p%supTr(:,1:3))
              !! Find curvature in local element directions
-             p2%kappa = matmul(dX,Trot)
+             X0 = matmul(dX,Trot)
              p2%kappa(1) = 0.0_dp
+             p2%kappa(2) = X0(3)
+             p2%kappa(3) = X0(2)
              p2%Moment = current%elm(i)%p%EI*p2%kappa(2:3)
+          end if
+          if (prebend) then
+             !! Store the bending moment due to initial prebending
+             current%elm(i)%p%M0 = p2%Moment
+             if (i > 2) then
+                !! Transform the prebending moment at current and previous triad
+                !! to global coordinates and calculate the average,
+                !! then transform back to local axes of the previous element
+                X1 = matmul(current%elm(i)%p%supTr(:,2:3),p2%Moment)
+                X2 = matmul(current%elm(i-1)%p%supTr(:,2:3), &
+                     &      current%elm(i-1)%p%M0)
+                X0 = matmul(0.5_dp*(X1+X2),current%elm(i-1)%p%supTr(:,1:3))
+                current%elm(i-1)%p%M0 = X0(2:3)
+             else
+                current%elm(i-1)%p%M0 = p2%Moment
+             end if
           end if
           p0 => p1
           p1 => p2
           p2 => p3
        end do
+       if (prebend .and. lpu > 0) then
+          write(lpu,600) trim(getId(current%elm(1)%p%id)), &
+               &         trim(getId(current%elm(size(current%elm))%p%id))
+          do i = 1, size(current%elm)
+             write(lpu,601) i,current%elm(i)%p%M0
+          end do
+600       format(/' >>> Prebending moments for Beam ',A,' -- Beam ',A)
+601       format(I8,1P2E13.5)
+       end if
        current => current%next
     end do
 
     if (ierr < 0) call reportError (debugFileOnly_p,'updateBeamSectionForces')
 
-    if (nBeam >= size(sups)) return ! Pure beamstring model
+    if (prebend .or. nBeam >= size(sups)) return ! Pure beamstring model
 
     !! Calculation for the remaining beams that are not in a chain.
 

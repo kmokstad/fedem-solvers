@@ -334,6 +334,12 @@ contains
        call scaledMatmul (m,n,sups(i)%stifScl(1), &
             &             sups(i)%KmMat,sups(i)%Finit,sups(i)%Fs)
 
+       if (associated(sups(i)%M0)) then
+          !! Add initial moments due to prebending of beams
+          sups(i)%Fs( 5: 6) = sups(i)%Fs( 5: 6) - sups(i)%M0
+          sups(i)%Fs(11:12) = sups(i)%Fs(11:12) + sups(i)%M0
+       end if
+
        if (associated(sups(i)%fg)) then
           !! Calculate the gravitational forces which is an external force
           call scaledMatmul (m,3,sups(i)%massScl(1),sups(i)%fg, &
@@ -548,6 +554,12 @@ contains
        !! Calculate the stiffness forces in the superelement, Fs = K*Finit
        call scaledMatmul (m,n,sups(i)%stifScl(1), &
             &             sups(i)%KmMat,sups(i)%Finit,sups(i)%Fs)
+
+       if (associated(sups(i)%M0)) then
+          !! Add initial moments due to prebending of beams
+          sups(i)%Fs( 5: 6) = sups(i)%Fs( 5: 6) - sups(i)%M0
+          sups(i)%Fs(11:12) = sups(i)%Fs(11:12) + sups(i)%M0
+       end if
 
        if (associated(sups(i)%fg) .and. .not. useFinitInc) then
           !! Calculate the gravitational forces which is an external force

@@ -546,6 +546,7 @@ DLLexport(int) solverInit (int argc, char** argv, const char* cfsi,
   ADD_PRIVATE_OPTION ("dumpWaveNode",0,"Dump wave kinematics at given Triad");
   ADD_PRIVATE_OPTION ("nHDupdat",1,"Number of iterations with hydrodynamics update");
   ADD_PRIVATE_OPTION ("curvature5p",false,"Use 5 point stencil in beam curvature calculations");
+  ADD_PRIVATE_OPTION ("prebendBeam",false,"Calculate prebending moments for beam strings");
   ADD_PRIVATE_OPTION ("HWAFLS",false,"Use hardware module for wave kinematics");
   ADD_PRIVATE_OPTION ("FNV",0,"FNV wave force formulation option");
   ADD_PRIVATE_OPTION ("FNVcutoff",-1.0,"FNV LP cut-off frequency for the kinematics");

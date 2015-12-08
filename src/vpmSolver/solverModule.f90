@@ -119,6 +119,7 @@ contains
     use RestartModule             , only : restartInit
     use AddInSysModule            , only : getForceVectors
     use TimeStepModule            , only : getInitialTimeStepSize
+    use FiniteElementModule       , only : updateBeamSectionForces
     use SolverRoutinesModule      , only : openVTF, printMassDistribution
     use SolverRoutinesModule      , only : calculateIterationTolerances, meqErr
     use SolverRoutinesModule      , only : saveStep, updatePreviousState
@@ -405,6 +406,11 @@ contains
        call ffa_cmdlinearg_getdouble ('saveinc2',recInc)
     end if
 #endif
+
+    if (ffa_cmdlinearg_isTrue('prebendBeam')) then
+       call updateBeamSectionForces (mech%sups,.true.,IO,ierr)
+       if (ierr < 0) goto 915
+    end if
 
 
     !! --- Establish the initial configuration ---------------------------------
@@ -2587,7 +2593,7 @@ contains
            &                   linInc=2,ierr=ierr)
 
       !! Beam sectional force update (based on superelement-level quantities)
-      call updateBeamSectionForces (mech%sups,ierr)
+      call updateBeamSectionForces (mech%sups,.false.,0,ierr)
 
       if (ierr < 0) call reportError (debugFileOnly_p,'forcesFromDisp')
 
