@@ -22,7 +22,7 @@ module ForceRoutinesModule
 
   private
 
-  public :: updateExternalForces, addInExternalForces
+  public :: updateExternalForces, addInExternalForces, calcExtTriadForceGradient
 
 
 contains
@@ -266,5 +266,62 @@ contains
     end select
 
   end subroutine calcExtTriadForce
+
+
+  subroutine calcExtTriadForceGradient (force,eV,ierr)
+
+    !!==========================================================================
+    !! Calculates the system force gradient vector from an external force
+    !! acting on a Triad.
+    !!
+    !! Calculates gradient w.r.t engine input for an external force
+    !! TODO: handle joint forces
+    !!
+    !! Programmer : Bjorn Haugen
+    !! date/rev   : 24  Jun 2009 / 1.0
+    !!==========================================================================
+
+    use ForceTypeModule     , only : ForceType, forceVec_p, momentVec_p, dp
+    use EngineRoutinesModule, only : EngineRate
+    use TriadTypeModule     , only : transGlobToSys, transTriadToSys
+    use reportErrorModule   , only : internalError
+
+    type(ForceType), intent(in)  :: force
+    real(dp)       , intent(out) :: eV(6)
+    integer        , intent(out) :: ierr
+
+    !! Local variables
+    real(dp) :: engineGrad
+
+    !! --- Logic section ---
+
+    ierr = 0
+    eV = 0.0_dp
+    if (associated(force%engine)) then
+       engineGrad = force%f1 * EngineRate(force%engine,ierr)
+    else
+       engineGrad = force%f1
+    end if
+
+    select case (force%dof)
+
+    case (forceVec_p)
+       eV(1:3) = engineGrad * force%forceDir
+       call transGlobToSys (force%triad,eV(1:3))
+
+    case (momentVec_p)
+       eV(4:6) = engineGrad * force%forceDir
+       call transGlobToSys (force%triad,eV(4:6))
+
+    case (1:6) ! The force is acting directly on a nodal dof
+       eV(force%dof) = engineGrad
+       call transTriadToSys (force%triad,eV(1:force%triad%nDOFs))
+
+    case default
+       ierr = internalError('calcExtTriadForceEngineGradient')
+
+    end select
+
+  end subroutine calcExtTriadForceGradient
 
 end module ForceRoutinesModule
