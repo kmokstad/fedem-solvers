@@ -1115,4 +1115,262 @@ contains
 
   end subroutine PrintFuncValues
 
+
+  subroutine SensorGradient_wrt_disp (sensor, sensorGrad_wrt_disp, ierr)
+
+    !!==========================================================================
+    !! Calculate gradient of the sensor with respect to displacement dofs
+    !! TODO: bh: Lots and lots here
+    !!
+    !! Programmer : Bjorn Haugen
+    !! date/rev   : 28 Jun 2009 / 1.0
+    !!==========================================================================
+
+    use SensorTypeModule , only : SensorType, dp
+    use SensorTypeModule , only : TIME_p, CONTROL_p, MATLAB_WS_p
+    use SensorTypeModule , only : JOINT_VARIABLE_p, RELATIVE_TRIAD_p, TRIAD_p
+    use SensorTypeModule , only : SPRING_AXIAL_p, SPRING_JOINT_p
+    use SensorTypeModule , only : DAMPER_AXIAL_p, DAMPER_JOINT_p
+    use SensorTypeModule , only : LENGTH_p, VEL_p, ACC_p, LOCAL_p, GLOBAL_p
+    use SensorTypeModule , only : POS_p, REL_POS_p, FORCE_p
+    use IdTypeModule     , only : getId
+    use reportErrorModule, only : internalError, reportError, error_p
+
+    type(SensorType), pointer       :: sensor
+    real(dp),         intent(out)   :: sensorGrad_wrt_disp(:)
+    integer         , intent(inout) :: ierr
+
+    !! Local variables
+    integer :: lerr, dof, idir, istart
+
+    !! --- Logic section ---
+
+    sensorGrad_wrt_disp = 0.0_dp
+
+    lerr = ierr
+    select case (sensor%type)
+
+    case (TRIAD_p)
+
+       select case (sensor%system)
+
+       case (LOCAL_p)
+          sensorGrad_wrt_disp(sensor%dof) = 1.0_dp
+
+       case (GLOBAL_p)
+          dof  = sensor%dof
+          iDir = dof
+          iStart = 1
+          if (iDir > 3) then
+             idir = iDir - 3
+             iStart = 3
+          end if
+
+          sensorGrad_wrt_disp(iStart:iStart+2) = triads(sensor%index)%ur(:,iDir)
+
+       case default
+          ierr = ierr + internalError('SensorGrad_wrt_disp: Invalid sensor type')
+       end select
+
+    case (RELATIVE_TRIAD_p)
+
+       ierr = ierr + internalError('SensorGrad_wrt_disp: Not yet done')
+
+!!$       select case
+!!$      case (REL_POS_p) ! Relative positions
+!!$
+!!$         select case (dof)
+!!$
+!!$         case (1:3) ! X, Y or Z-distance
+!!$            GetRelative = triad2%ur(dof,4) - triad1%ur(dof,4)
+!!$
+!!$         case (4:6) ! X, Y or Z-rotation (Euler ZYX)
+!!$            call FFa_eulerZYX (triad1%ur(:,1:3),triad2%ur(:,1:3),relpos)
+!!$            GetRelative = relPos(dof-3)
+!!$
+!!$         case (7:9) ! X, Y or Z-rotation (Rodrigues parametrization)
+!!$            relPos = deltaRot(triad1%ur(:,1:3),triad2%ur(:,1:3))
+!!$            GetRelative = relPos(dof-6)
+!!$
+!!$         case (0)   ! relative distance
+!!$            relPos = triad2%ur(:,4) - triad1%ur(:,4)
+!!$            GetRelative = sqrt(dot_product(relPos,relPos))
+!!$
+!!$         case default
+!!$            ierr = ierr + internalError('UpdateSensor: Invalid sensor DOF')
+!!$            GetRelative = 0.0_dp
+!!$         end select
+
+    case default
+       ierr = ierr + internalError('SensorGrad_wrt_disp: Invalid sensor type')
+    end select
+
+    if (ierr < lerr) then
+       call reportError (error_p,'Failed to update sensor'//getId(sensor%id), &
+            &            addString='SensorGrad_wrt_disp')
+    end if
+
+  contains
+
+    !!==========================================================================
+    !! Evaluates a local velocity, acceleration or force for the given triad.
+    !!==========================================================================
+
+    function GetLocal (triad,dof,entity)
+
+      type(TriadType), intent(in) :: triad
+      integer        , intent(in) :: dof, entity
+
+      integer  :: iStart, iDir
+      real(dp) :: GetLocal, vec(3)
+
+      select case (dof)
+      case (1:3)
+         iStart = 1
+         iDir   = dof
+      case (4:6)
+         iStart = 4
+         iDir   = dof - 3
+      case default
+         ierr = ierr + internalError('UpdateSensor: Invalid sensor DOF')
+         GetLocal = 0.0_dp
+         return
+      end select
+
+      select case (entity)
+      case (VEL_p)
+         vec = triad%urd(iStart:iStart+2)
+      case (ACC_p)
+         vec = triad%urdd(iStart:iStart+2)
+      case (FORCE_p)
+         vec = triad%nodeForce(iStart:iStart+2)
+      case default
+         ierr = ierr + internalError('UpdateSensor: Invalid sensor entity')
+         GetLocal = 0.0_dp
+         return
+      end select
+
+      GetLocal = dot_product(triad%ur(:,iDir),vec)
+
+    end function GetLocal
+
+    !!==========================================================================
+    !! Evaluates a global rotation angle for the given triad.
+    !!==========================================================================
+
+    function GetAngle (triad,dof)
+
+      use rotationModule, only : FFa_glbEulerZYX, mat_to_vec
+
+      type(TriadType), intent(in) :: triad
+      integer        , intent(in) :: dof
+
+      real(dp) :: GetAngle, vec(3)
+
+      if (dof > 0 .and. dof <= 3) then
+         !! X, Y or Z-rotation (Euler ZYX)
+         call FFa_glbEulerZYX (triad%ur(:,1:3),vec)
+         GetAngle = vec(dof)
+      else if (dof > 3 .and. dof <= 6) then
+         !! X, Y or Z-rotation (Rodrigues parametrization)
+         call mat_to_vec (triad%ur(:,1:3),vec)
+         GetAngle = vec(dof-3)
+      end if
+
+    end function GetAngle
+
+    !!==========================================================================
+    !! Evaluates a relative quantity between the given two triads.
+    !!==========================================================================
+
+    function GetRelative (triad1,triad2,dof,entity,oldValue)
+
+      use rotationModule, only : FFa_eulerZYX, deltaRot
+
+      type(TriadType), intent(in) :: triad1, triad2
+      integer        , intent(in) :: dof, entity
+      real(dp)       , intent(in) :: oldValue
+
+      real(dp)            :: GetRelative, relDis, relPos(3), vec(3)
+      real(dp), parameter :: eps_p = 1.0e-12_dp
+
+      select case (entity)
+
+      case (REL_POS_p) ! Relative positions
+
+         select case (dof)
+
+         case (1:3) ! X, Y or Z-distance
+            GetRelative = triad2%ur(dof,4) - triad1%ur(dof,4)
+
+         case (4:6) ! X, Y or Z-rotation (Euler ZYX)
+            call FFa_eulerZYX (triad1%ur(:,1:3),triad2%ur(:,1:3),relpos)
+            GetRelative = relPos(dof-3)
+
+         case (7:9) ! X, Y or Z-rotation (Rodrigues parametrization)
+            relPos = deltaRot(triad1%ur(:,1:3),triad2%ur(:,1:3))
+            GetRelative = relPos(dof-6)
+
+         case (0)   ! relative distance
+            relPos = triad2%ur(:,4) - triad1%ur(:,4)
+            GetRelative = sqrt(dot_product(relPos,relPos))
+
+         case default
+            ierr = ierr + internalError('UpdateSensor: Invalid sensor DOF')
+            GetRelative = 0.0_dp
+         end select
+
+      case (VEL_p) ! Relative velocities
+
+         select case (dof)
+
+         case (1:6) ! X, Y or Z-velocity
+            GetRelative = triad2%urd(dof) - triad1%urd(dof)
+
+         case (0)   ! relative velocity
+            relPos = triad2%ur(:,4) - triad1%ur(:,4)
+            relDis = dot_product(relPos,relPos)
+            if (relDis < eps_p) then
+               GetRelative = oldValue ! Keep the old value
+            else
+               vec = triad2%urd(1:3) - triad1%urd(1:3)
+               GetRelative = dot_product(vec,relPos)/sqrt(relDis)
+            end if
+
+         case default
+            ierr = ierr + internalError('UpdateSensor: Invalid sensor DOF')
+            GetRelative = 0.0_dp
+         end select
+
+      case (ACC_p) ! Relative accelerations
+
+         select case (dof)
+
+         case (1:6) ! X, Y or Z-acceleration
+            GetRelative = triad2%urdd(dof) - triad1%urdd(dof)
+
+         case (0)   ! relative acceleration
+            relPos = triad2%ur(:,4) - triad1%ur(:,4)
+            relDis = dot_product(relPos,relPos)
+            if (relDis < eps_p) then
+               GetRelative = oldValue ! Keep the old value
+            else
+               vec = triad2%urdd(1:3) - triad1%urdd(1:3)
+               GetRelative = dot_product(vec,relPos)/sqrt(relDis)
+            end if
+
+         case default
+            ierr = ierr + internalError('UpdateSensor: Invalid sensor DOF')
+            GetRelative = 0.0_dp
+         end select
+
+      case default
+         ierr = ierr + internalError('UpdateSensor: Invalid sensor entity')
+         GetRelative = 0.0_dp
+      end select
+
+    end function GetRelative
+
+  end subroutine SensorGradient_wrt_disp
+
 end module EngineRoutinesModule

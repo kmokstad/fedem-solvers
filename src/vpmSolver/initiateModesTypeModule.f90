@@ -69,12 +69,12 @@ contains
        doInit = modes%nModes < 1
        if (nModes > modes%nModes) then
           !! Need to reallocate
-          if (associated(modes%effMass)) deallocate(modes%effMass)
           if (associated(modes%ReVal))   deallocate(modes%ReVal)
           if (associated(modes%ReVec))   deallocate(modes%ReVec)
-          if (associated(modes%dampRat)) deallocate(modes%dampRat)
           if (associated(modes%ImVal))   deallocate(modes%ImVal)
           if (associated(modes%ImVec))   deallocate(modes%ImVec)
+          if (associated(modes%dampRat)) deallocate(modes%dampRat)
+          if (associated(modes%effMass)) deallocate(modes%effMass)
           modes%nModes = nModes
        else
           modes%nModes = nModes
@@ -107,6 +107,10 @@ contains
              modes%solver = 5 ! Using DSYGVX eigensolver for symmetric systems
           else if (ffa_cmdlinearg_isTrue('undamped')) then
              modes%solver = 3 ! Using DGGEVX eigensolver for undamped systems
+          else if (ffa_cmdlinearg_isTrue('2nStSp')) then
+             modes%solver = 4
+          else if (ffa_cmdlinearg_isTrue('3nStSp')) then
+             modes%solver = 6
           end if
        end if
        if (sys%Nmat%storageType == skylineMatrix_p) then
@@ -117,11 +121,13 @@ contains
        call shareMatrixStructure (modes%Kmat,sys%Nmat)
        call shareMatrixStructure (modes%Cmat,sys%Nmat)
        call shareMatrixStructure (modes%Mmat,sys%Nmat)
+       call shareMatrixStructure (modes%Qmat,sys%Nmat)
 
        !! Allocate system matrices for eigenvalue solver
        call allocateSysMatrix (modes%Kmat,err)
        call allocateSysMatrix (modes%Cmat,err)
        call allocateSysMatrix (modes%Mmat,err)
+       call allocateSysMatrix (modes%Qmat,err)
        if (err < 0) then
           call reportError (debugFileOnly_p,'InitiateModes')
           return
@@ -145,39 +151,42 @@ contains
        if (modes%maxLan > sam%neq)   modes%maxLan = sam%neq
     end if
 
-    if (ffa_cmdlinearg_isTrue('effModalMass')) then
-       allocate(modes%effMass(modes%nModes,6), STAT=err)
-       if (err /= 0) then
-          err = AllocationError('InitiateModes 1')
-          return
-       end if
-       modes%effMass = 0.0_dp
-    end if
-
     !! Allocate real eigenvalues and eigenvectors
     allocate(modes%ReVal(modes%nModes), &
          &   modes%ReVec(sam%ndof,modes%nModes), &
          &   modes%dampRat(modes%nModes), STAT=err)
     if (err /= 0) then
-       err = AllocationError('InitiateModes 2')
+       err = AllocationError('InitiateModes 1')
        return
     end if
 
     modes%ReVal = 0.0_dp
     modes%ReVec = 0.0_dp
     modes%dampRat = 0.0_dp
-    if (modes%solver /= 4) return
 
-    !! Allocate imaginary eigenvalues and eigenvectors
-    allocate(modes%ImVal(modes%nModes), &
-         &   modes%ImVec(sam%ndof,modes%nModes), STAT=err)
-    if (err /= 0) then
-       err = AllocationError('InitiateModes 3')
-       return
+    if (modes%solver == 4 .or. modes%solver == 6) then
+
+       !! Allocate imaginary eigenvalues and eigenvectors
+       allocate(modes%ImVal(modes%nModes), &
+            &   modes%ImVec(sam%ndof,modes%nModes), STAT=err)
+       if (err /= 0) then
+          err = AllocationError('InitiateModes 2')
+          return
+       end if
+       modes%ImVal = 0.0_dp
+       modes%ImVec = 0.0_dp
+
+    else if (ffa_cmdlinearg_isTrue('effModalMass')) then
+
+       !! Allocate array for effective modal mass calculation
+       allocate(modes%effMass(modes%nModes,6), STAT=err)
+       if (err /= 0) then
+          err = AllocationError('InitiateModes 3')
+          return
+       end if
+       modes%effMass = 0.0_dp
+
     end if
-
-    modes%ImVal = 0.0_dp
-    modes%ImVec = 0.0_dp
 
   end subroutine initiateModes
 
