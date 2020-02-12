@@ -45,11 +45,11 @@ function checkCtrlParams (elmType,nRealData,nVar)
      if (checkPrm(3,2)) return
   case (24)
      if (checkPrm(10,2)) return
-  case (31)
+  case (31,47,49)
      if (checkPrm(3,3)) return
   case (32,34,43)
      if (checkPrm(4,4)) return
-  case (33)
+  case (33,48)
      if (checkPrm(3,4)) return
   case (35)
      if (checkPrm(4,5)) return
@@ -63,6 +63,8 @@ function checkCtrlParams (elmType,nRealData,nVar)
      if (checkPrm(6,6)) return
   case (45,46)
      return ! TODO: more testing
+  case (50)
+     if (checkPrm(3,6)) return
   case default
      elmType = -abs(elmType) ! Unknown element type
   end select

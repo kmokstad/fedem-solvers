@@ -34,6 +34,10 @@ C  mod43.f - First order element
 C  mod44.f - Second order element
 C  mod45.f - Linear control system
 C  mod46.f - General transfer function
+C  mod47.f - Low pass filter	(high order)
+C  mod48.f - High pass filter	(high order)
+C  mod49.f - Band pass filter	(high order)
+C  mod50.f - Band stop (notch) filter (high order)
 
 C **********************************************************************
 
@@ -57,7 +61,7 @@ C  Implementor  : Torleif Iversen, SINTEF/Div. of Aut. Control
 
 C  Date         : October 1988
 
-C  Last revision: No revision
+C  Last revision: MOD44 Modified by Torleif and Terje Rølvåg 24/1 - 2020
 
 C  Purpose      : Compute functional values for module no. xx, or initialize
 C                 the status flags MST1,...,MSTm for the variables, and the
@@ -1455,12 +1459,14 @@ C **********************************************************************
      >                 MST5, MST6, MM2, MM3, MM4, MM5, MM6, PAR, ZCTRL0)
 
 C ............................. Second order element
+
 C ............................. y2'= y1
 C ............................. y3'= y2
-C ............................. y4'= y6
-C ............................. y5'= y4
-C .............................  0 = (k*(T4*y1 + T3*y2 + y3) - T1*y4 - y5)/T1
+C ............................. y4'= y5
+C ............................. y5'= y6
+C .............................  0 = (k*(T4*y1 + T3*y2 + y3) - y4 - T1*y5)/T1
 C .............................      -y6
+
 
       IMPLICIT DOUBLE PRECISION (A-H, O-Z)
       DOUBLE PRECISION PAR(5)
@@ -1492,10 +1498,10 @@ C ............................. compute the functional values ...
 C ............................. and assign them to the proper output(s)
          YD2 = Y1
          YD3 = Y2
-         YD4 = Y6
-         YD5 = Y4
-         YD6 = (PAR(1)*(PAR(5)*Y1 + PAR(4)*Y2 + Y3) - PAR(2)*Y4
-     >        -Y5)/PAR(3) - Y6
+         YD4 = Y5
+         YD5 = Y6
+         YD6 = (PAR(1)*(PAR(5)*Y1 + PAR(4)*Y2 + Y3) - Y4
+     >        -PAR(2)*Y5)/PAR(3) - Y6
       END IF
 
       RETURN
@@ -1655,3 +1661,208 @@ c ............................. variables and the output
 
       return
       end
+
+C **********************************************************************
+
+      SUBROUTINE MOD47(IOP, MODNO, Y1, Y2, Y3, YD2, YD3,
+     >                 MST2, MST3, MM2, MM3, PAR, ZCTRL0)
+
+C ---> 22.01.20/TI
+C ............................. Low pass filter (high order)
+C .............................
+C .............................              w^2
+C ............................. H(s) = -------------------
+C .............................        s^2 + 2*e*w*s + w^2
+C ............................. where
+C ............................. e - (eta) relative damping coefficient
+C ............................. w - (omega_n) natural angular frequency
+C .............................
+C ............................. Internal equations
+C ............................. y2'= w*w*y1 - 2*e*w*y2 - w*w*y3
+C ............................. y3'= y2
+
+      IMPLICIT DOUBLE PRECISION (A-H, O-Z)
+      DOUBLE PRECISION PAR(2)
+      LOGICAL ZCTRL0
+
+C ............................. Initialization mode
+      IF (IOP .EQ. 1) THEN
+C ............................. Set the state variable statuses, module number
+C ............................. and initial state values
+         MST2 = 2
+         MST3 = 2
+         MM2  = MODNO
+         MM3  = MODNO
+         if (ZCTRL0) return
+         Y2 = 0.0d0
+         Y3 = Y1
+C ............................. Execution mode
+      ELSE
+C ............................. Compute the functional values ...
+C ............................. and assign them to the proper output(s)
+         YD2 = PAR(2)*PAR(2)*(Y1- Y3) - 2*PAR(1)*PAR(2)*Y2
+         YD3 = Y2
+      END IF
+
+      RETURN
+      END
+
+
+C **********************************************************************
+
+      SUBROUTINE MOD48(IOP, MODNO, Y1, Y2, Y3, Y4, YD2, YD3,
+     >                 YD4, MST2, MST3, MST4, MM2, MM3, MM4,
+     >                 PAR, ZCTRL0)
+
+C ---> 22.01.20/TI
+C ............................. High pass filter
+C .............................
+C .............................              s^2
+C ............................. H(s) = -------------------
+C .............................        s^2 + 2*e*w*s + w^2
+C ............................. where
+C ............................. e - (eta) relative damping coefficient
+C ............................. w - (omega_n) natural angular frequency
+C .............................
+C ............................. Internal equations
+C ............................. y2'= y3
+C ............................. y3'= y4
+C .............................  0 = y1 - w*w*y2 - 2*e*w*y3 - y4
+
+      IMPLICIT DOUBLE PRECISION (A-H, O-Z)
+      DOUBLE PRECISION PAR(2)
+      LOGICAL ZCTRL0
+
+C ............................. Initialization mode
+      IF (IOP .EQ. 1) THEN
+C ............................. Set the state variable statuses, module number
+C ............................. and initial state values
+         MST2 = 2
+         MST3 = 2
+         MST4 = 3
+         MM2  = MODNO
+         MM3  = MODNO
+         MM4  = MODNO
+         if (ZCTRL0) return
+         Y2 = 0.0d0
+         Y3 = 0.0d0
+         Y4 = 0.0d0
+C ............................. Execution mode
+      ELSE
+C ............................. compute the functional values ...
+C ............................. and assign them to the proper output(s)
+         YD2 = Y3
+         YD3 = Y4
+         YD4 = Y1 - PAR(2)*PAR(2)*Y2 - 2*PAR(1)*PAR(2)*Y2 - y4
+      END IF
+
+      RETURN
+      END
+
+
+C **********************************************************************
+
+      SUBROUTINE MOD49(IOP, MODNO, Y1, Y2, Y3, YD2, YD3,
+     >                 MST2, MST3, MM2, MM3, PAR, ZCTRL0)
+
+C ---> 22.01.20/TI
+C ............................. Band pass filter
+C .............................
+C .............................              2*e*w*s
+C ............................. H(s) = -------------------
+C .............................        s^2 + 2*e*w*s + w^2
+C ............................. where
+C ............................. e - (eta) relative damping coefficient
+C ............................. w - (omega_n) natural angular frequency
+C .............................
+C ............................. Internal equations
+C ............................. y2'= y3
+C ............................. y3'= 2*e*w*y1 - w*w*y2 - 2*e*w*y3
+
+      IMPLICIT DOUBLE PRECISION (A-H, O-Z)
+      DOUBLE PRECISION PAR(2)
+      LOGICAL ZCTRL0
+
+C ............................. Initialization mode
+      IF (IOP .EQ. 1) THEN
+C ............................. Set the state variable statuses, module number
+C ............................. and initial state values
+         MST2 = 2
+         MST3 = 2
+         MM2  = MODNO
+         MM3  = MODNO
+         if (ZCTRL0) return
+         Y2 = 0.0d0
+         Y3 = 0.0d0
+C ............................. Execution mode
+      ELSE
+C ............................. Compute the functional values ...
+C ............................. and assign them to the proper output(s)
+         YD2 = Y3
+         YD3 = 2*PAR(1)*PAR(2)*(Y1- Y3) - PAR(2)*PAR(2)*Y2
+      END IF
+
+      RETURN
+      END
+
+
+C **********************************************************************
+
+      SUBROUTINE MOD50(IOP, MODNO, Y1, Y2, Y3, Y4, Y5, Y6, YD2, YD3,
+     >                 YD4, YD5, YD6, MST2, MST3, MST4, MST5, MST6,
+     >                 MM2, MM3, MM4, MM5, MM6, PAR, ZCTRL0)
+
+C ---> 22.01.20/TI
+C ............................. Band stop (notch) filter
+C .............................
+C .............................            s^2 + w^2
+C ............................. H(s) = -------------------
+C .............................        s^2 + 2*e*w*s + w^2
+C ............................. where
+C ............................. e - (eta) relative damping coefficient
+C ............................. w - (omega_n) natural angular frequency
+C .............................
+C ............................. Internal equations
+C ............................. y2'= y1
+C ............................. y3'= y2
+C ............................. y4'= y5
+C ............................. y5'= y6
+C .............................  0 = y1 + w*w*(y3 - y4) - 2*e*w*y5 - y6
+
+      IMPLICIT DOUBLE PRECISION (A-H, O-Z)
+      DOUBLE PRECISION PAR(2)
+      LOGICAL ZCTRL0
+
+C ............................. Initialization mode
+      IF (IOP .EQ. 1) THEN
+C ............................. Set the state variable statuses, module number
+C ............................. and initial state values
+         MST2 = 2
+         MST3 = 2
+         MST4 = 2
+         MST5 = 2
+         MST6 = 3
+         MM2  = MODNO
+         MM3  = MODNO
+         MM4  = MODNO
+         MM5  = MODNO
+         MM6  = MODNO
+         if (ZCTRL0) return
+         Y2 = 0.0d0
+         Y3 = 0.0d0
+         Y4 = 0.0d0
+         Y5 = 0.0d0
+         Y6 = 0.0d0
+C ............................. Execution mode
+      ELSE
+C ............................. compute the functional values ...
+C ............................. and assign them to the proper output(s)
+         YD2 = Y1
+         YD3 = Y2
+         YD4 = Y5
+         YD5 = Y6
+         YD6 = Y1 + PAR(2)*PAR(2)*(Y3 - Y4) - 2*PAR(1)*PAR(2)*Y5 - y6
+      END IF
+
+      RETURN
+      END

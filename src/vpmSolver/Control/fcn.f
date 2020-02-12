@@ -124,18 +124,19 @@ C ............................. find the pointer to the first parameter ...
 C ............................. which follows type of module ...
          MTYP = IDINT(RPAR(MPAR-1))
 C ............................. and move to that type of module
-         IF (MTYP .LT. 1 .OR. MTYP .GT. 110) GOTO 211
-         GOTO (101,102,103,104,105,106,107,107,107,107,
-     >         111,112,113,113,113,113,113,113,113,113,
-     >         121,122,123,124,125,125,125,125,125,125,
-     >         131,132,133,134,135,136,137,138,138,138,
-     >         141,142,143,144,145,146,147,147,147,147,
-     >         147,147,147,147,147,147,147,147,147,147,
-     >         147,147,147,147,147,147,147,147,147,147,
-     >         147,147,147,147,147,147,147,147,147,147,
-     >         147,147,147,147,147,147,147,147,147,147,
-     >         147,147,147,147,147,147,147,147,147,147,
-     >         2000,2000,2000,2000,2000,2000,2000,2000,2000,2000) MTYP
+         GOTO (101,102,103,104,105,106,107,100,100,100,
+     >         111,112,100,100,100,100,100,100,100,100,
+     >         121,122,123,124,100,100,100,100,100,100,
+     >         131,132,133,134,135,136,137,100,100,100,
+     >         141,142,143,144,145,146,147,148,149,150) MTYP
+
+         IF (MTYP .GT. 100 .and. MTYP .LE. 110) GOTO 2000
+
+C ............................. Undefined module
+  100    CONTINUE
+         IERR(1) = -1
+         IERR(2) = MTYP
+         RETURN
 
 C ............................. Module type 1 - Comparator
   101    CONTINUE
@@ -212,6 +213,7 @@ C ............................. or computation of functional values
 C ............................. Module type 7 - Power function
   107    CONTINUE
 
+
 C ............................. Invoke the module for initialization ...
 C ............................. or computation of functional values
          CALL MOD7(IOP, MODNO,
@@ -221,11 +223,6 @@ C ............................. or computation of functional values
      >                          MMOD(MMTOP(MF+1)),
      >        RPAR(MPAR), ZCTRL0)
          GOTO 999
-
-C ............................. Module type 8 - 10
-         IERR(1) = -1
-         IERR(2) = MTYP
-         RETURN
 
 C ............................. Module type 11 - Time delay
   111    CONTINUE
@@ -250,11 +247,6 @@ C ............................. or computation of functional values
      >        RPAR(MPAR), ZCTRL0)
          GOTO 999
 
-C ............................. Module type 13 - 20
-  113    CONTINUE
-         IERR(1) = -1
-         IERR(2) = MTYP
-         RETURN
 
 C ............................. Module type 21 - Logical switch
   121    CONTINUE
@@ -332,11 +324,6 @@ C ............................. or computation of functional values
      >        RPAR(MPAR), ZCTRL0)
          GOTO 999
 
-C ............................. Module type 25 - 30
-  125    CONTINUE
-         IERR(1) = -1
-         IERR(2) = MTYP
-         RETURN
 
 C ............................. Module type 31 - PI-controller
   131    CONTINUE
@@ -438,11 +425,6 @@ C ............................. or computation of functional values
      >        RPAR(MPAR), ZCTRL0)
          GOTO 999
 
-C ............................. Module type 38 - 40
-  138    CONTINUE
-         IERR(1) = -1
-         IERR(2) = MTYP
-         RETURN
 
 C ............................. Module type 41 - Real pole
   141    CONTINUE
@@ -529,12 +511,59 @@ C ............................. or computation of functional values
          CALL MOD46(IOP, MODNO, VREG, VDREG, MSTAT, MMOD, MMTOP, MF,
      >        NDIM, RPAR(MPAR+1))
          GOTO 999
-
-C ............................. Module type 47 - 100
+C
+C ............................. Module type 47 - Low pass filter (new high order)
   147    CONTINUE
-         IERR(1) = -1
-         IERR(2) = MTYP
-         RETURN
+C ............................. Invoke the module for initialization ...
+C ............................. or computation of functional values
+         CALL MOD47(IOP, MODNO,
+     >        VREG(MMTOP(MF)),  VREG(MMTOP(MF+1)),  VREG(MMTOP(MF+2)),
+     >                          VDREG(MMTOP(MF+1)), VDREG(MMTOP(MF+2)),
+     >                          MSTAT(MMTOP(MF+1)), MSTAT(MMTOP(MF+2)),
+     >                          MMOD(MMTOP(MF+1)),  MMOD(MMTOP(MF+2)),
+     >        RPAR(MPAR), ZCTRL0)
+         GOTO 999
+
+C ............................. Module type 48 - High pass filter (new high order)
+  148    CONTINUE
+C ............................. Invoke the module for initialization ...
+C ............................. or computation of functional values
+         CALL MOD48(IOP, MODNO,  VREG(MMTOP(MF)),
+     >        VREG(MMTOP(MF+1)), VREG(MMTOP(MF+2)), VREG(MMTOP(MF+3)),
+     >        VDREG(MMTOP(MF+1)),VDREG(MMTOP(MF+2)),VDREG(MMTOP(MF+3)),
+     >        MSTAT(MMTOP(MF+1)),MSTAT(MMTOP(MF+2)),MSTAT(MMTOP(MF+3)),
+     >        MMOD(MMTOP(MF+1)), MMOD(MMTOP(MF+2)), MMOD(MMTOP(MF+3)),
+     >        RPAR(MPAR), ZCTRL0)
+         GOTO 999
+
+C ............................. Module type 49 - Band pass filter (new high order)
+  149    CONTINUE
+C ............................. Invoke the module for initialization ...
+C ............................. or computation of functional values
+         CALL MOD49(IOP, MODNO,
+     >        VREG(MMTOP(MF)),  VREG(MMTOP(MF+1)),  VREG(MMTOP(MF+2)),
+     >                          VDREG(MMTOP(MF+1)), VDREG(MMTOP(MF+2)),
+     >                          MSTAT(MMTOP(MF+1)), MSTAT(MMTOP(MF+2)),
+     >                          MMOD(MMTOP(MF+1)),  MMOD(MMTOP(MF+2)),
+     >        RPAR(MPAR), ZCTRL0)
+         GOTO 999
+
+C ............................. Module type 50 - Band stop (notch) filter (new high order)
+  150    CONTINUE
+C ............................. Invoke the module for initialization ...
+C ............................. or computation of functional values
+         CALL MOD50(IOP, MODNO,
+     >        VREG(MMTOP(MF)),   VREG(MMTOP(MF+1)), VREG(MMTOP(MF+2)),
+     >        VREG(MMTOP(MF+3)), VREG(MMTOP(MF+4)), VREG(MMTOP(MF+5)),
+     >                           VDREG(MMTOP(MF+1)),VDREG(MMTOP(MF+2)),
+     >        VDREG(MMTOP(MF+3)),VDREG(MMTOP(MF+4)),VDREG(MMTOP(MF+5)),
+     >                           MSTAT(MMTOP(MF+1)),MSTAT(MMTOP(MF+2)),
+     >        MSTAT(MMTOP(MF+3)),MSTAT(MMTOP(MF+4)),MSTAT(MMTOP(MF+5)),
+     >                           MMOD(MMTOP(MF+1)), MMOD(MMTOP(MF+2)),
+     >        MMOD(MMTOP(MF+3)), MMOD(MMTOP(MF+4)), MMOD(MMTOP(MF+5)),
+     >        RPAR(MPAR), ZCTRL0)
+         GOTO 999
+
 
 C ............................. Module type 101 - 110 - User defined models
  2000    CONTINUE
@@ -559,8 +588,7 @@ C ............................. Initialize the status mstat and mmod
          ELSE
 C ............................. When the mode is set to execution, call
 C ............................. the routine containing the user model
-Ckmo         GOTO (201,202,203,204,205,206,207,208,209,210) MTYP-100
-            goto 211
+            GOTO (100,100,100,100,100,100,100,100,100,100) MTYP-100
          END IF
          GOTO 999
 Ckmo User-defined models currently removed
@@ -569,11 +597,6 @@ C      GOTO 999
 C      ...
 C 210  CALL MOD110(VREG, VDREG, MMTOP, MF, RPAR(MPAR))
 C      GOTO 999
-C ............................. Module type > 110
-  211 CONTINUE
-      IERR(1) = -1
-      IERR(2) = MTYP
-      RETURN
 
   999 CONTINUE
 
