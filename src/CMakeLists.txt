@@ -23,7 +23,7 @@ include_directories ( "${PROJECT_BINARY_DIR}/f90_modules"
                       "${CMAKE_CURRENT_SOURCE_DIR}"
                       "${PARENT_SOURCE_DIR}/fedem-foundation/src" )
 
-add_custom_target ( all_solvers )
+#add_custom_target ( all_solvers )
 
 if ( TARGET FFp )
   message ( STATUS "INFORMATION : Including FFp in all_solvers target" )

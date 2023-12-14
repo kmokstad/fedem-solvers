@@ -8,7 +8,7 @@
 # This is the top-level cmake project file for the Fedem solver sources.
 ################################################################################
 
-cmake_minimum_required ( VERSION 2.8...3.5 )
+cmake_minimum_required ( VERSION 3.6 )
 if ( POLICY CMP0076 )
   cmake_policy ( SET CMP0076 NEW ) # convert relative target source path names
 endif ( POLICY CMP0076 )
@@ -42,6 +42,10 @@ option ( USE_MEMPOOL "Use memory pool for heap allocation in FE library" false )
 option ( USE_PROFILER "Use CPU and Memory profiler" false )
 mark_as_advanced ( USE_MEMPOOL USE_PROFILER )
 
+# Redefine the startup project,
+# which the INSTALL target then will depend on
+add_custom_target ( all_solvers )
+set_property ( DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR} PROPERTY VS_STARTUP_PROJECT all_solvers )
 
 # Enable unit and regression testing
 
@@ -145,3 +149,5 @@ add_subdirectory ( fedem-foundation/src "${CMAKE_CURRENT_BINARY_DIR}/fedem-found
 add_subdirectory ( SAM/src "${CMAKE_CURRENT_BINARY_DIR}/src/SAM" )
 add_subdirectory ( src )
 add_subdirectory ( PythonAPI )
+
+set ( CMAKE_SUPPRESS_REGENERATION ON )
