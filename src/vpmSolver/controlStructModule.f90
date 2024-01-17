@@ -867,8 +867,7 @@ contains
     use ControlTypeModule
     use ControlRoutinesModule, only : IterateControlSystem
     use SensorTypeModule
-
-    implicit none
+    use DenseMatrixModule, only : solveAxB
 
     type(SystemType)   , intent(inout) :: sys
     type(MechanismType), intent(in)    :: mech
@@ -911,23 +910,19 @@ contains
     real(dp), allocatable :: uy(:)               !! u(y), output from controller
     !										     !! when input to controller is y = y0+dy
     real(dp), allocatable :: du(:)               !! du = u(y)-u(y0)
-    real(dp), allocatable :: dyMatrix(:,:,:)     !! matrix of perturbation parameters
-    real(dp), allocatable :: invDyMatrix(:,:,:)  !! inverse of the dy-matrix
-    real(dp), allocatable :: duTable(:,:,:)      !! table for storing du-results
-    ! 										     !!(no. of outputs from controller,
-    !										     !! no. of perturbations on controller,
-    ! 										     !! no. of inputs to controller)
-    real(dp), allocatable :: fullCtrlProps(:,:,:)!! Matrix of unnecessarily many controller properties
+    real(dp) :: dyMatrix(nPerturb,nPerturb)      !! matrix of perturbation parameters
+    real(dp), allocatable :: duTable(:,:)        !! table for storing du = u(y)-u(y0)
     integer :: ctrlSysMode = 3                   !! ctrlSysMode = 3 = controller integration
 
-    integer :: i, j, a, iInput, ErrorFlag
+    integer :: i, j, iInput
 
     !! --- Logic section ---
+
+    ctrlProps = 0.0_dp
 
     !! Reset counters
     i = 0   !! i used for numVregIn
     j = 0   !! j used for nPerturb
-    a = 0   !! a used for numVregOut
     iInput = 0
 
     !! Make copy of controller
@@ -951,12 +946,7 @@ contains
     du  = 0.0_dp
 
     !! Define dimensions of tables
-    allocate(duTable(numVregOut,nPerturb,numVregIn),dyMatrix(nPerturb,nPerturb,numVregIn), &
-         &   invDyMatrix(nPerturb,nPerturb,numVregIn),fullCtrlProps(numVregOut,nPerturb,numVregIn))
-    duTable       = 0.0_dp
-    fullCtrlProps = 0.0_dp
-    dyMatrix      = 0.0_dp
-    invDyMatrix   = 0.0_dp
+    allocate(duTable(nPerturb,numVregOut), STAT=ierr)
 
     !! Store the initial values of the time
     orgTime = sys%time
@@ -986,9 +976,9 @@ contains
           dintydt = (y0(i)+0.5_dp*dy)*dt
           ddydt = dy/dt
 
-          dyMatrix(j,1,i) = dintydt
-          dyMatrix(j,2,i) = dy
-          dyMatrix(j,3,i) = ddydt
+          dyMatrix(j,1) = dintydt
+          dyMatrix(j,2) = dy
+          dyMatrix(j,3) = ddydt
 
           !! The perturbation sequence
           !! Reset current controller (ctrlCopyCopy) to original state (ctrlCopy)
@@ -1002,35 +992,27 @@ contains
           !! Calculate du
           du(:) = uy(:)-uy0(:)
           !! Store du-results in a table
-          duTable(:,j,i) = du(:)
+          duTable(j,:) = du(:)
        end do
 
        !! Calculate controller properties
-       call FindInv(dyMatrix(:,:,i),invDyMatrix(:,:,i),nPerturb,ErrorFlag)
-       do j = 1, nPerturb
-          fullCtrlProps(:,j,i) = invDyMatrix(j,1,i)*duTable(:,1,i) &
-            &                   +invDyMatrix(j,2,i)*duTable(:,2,i) &
-            &                   +invDyMatrix(j,3,i)*duTable(:,3,i)
-       end do
+       call solveAxB (dyMatrix,duTable,ierr)
 
-       sensor => ctrlCopy%input(iInput)%engine%args(1)%p
-       if (sensor%entity == POS_p) then      !! find dintydt(j), dy(j), ddydt(j)
-          ctrlProps(:,1,i) = fullCtrlProps(:,1,i)
-          ctrlProps(:,2,i) = fullCtrlProps(:,2,i)
-          ctrlProps(:,3,i) = fullCtrlProps(:,3,i)
-          ctrlProps(:,4,i) = 0.0_dp
-       else if (sensor%entity == VEL_p) then !! find dintydt(j), dy(j), ddydt(j)
-          ctrlProps(:,1,i) = 0.0_dp
-          ctrlProps(:,2,i) = fullCtrlProps(:,1,i)
-          ctrlProps(:,3,i) = fullCtrlProps(:,2,i)
-          ctrlProps(:,4,i) = fullCtrlProps(:,3,i)
-       else if (sensor%entity == ACC_p) then !! find dintydt(j), dy(j)
-          ctrlProps(:,1,i) = 0.0_dp
-          ctrlProps(:,2,i) = 0.0_dp
-          ctrlProps(:,3,i) = fullCtrlProps(:,1,i)
-          ctrlProps(:,4,i) = fullCtrlProps(:,2,i)
-       else !! Error
-       end if
+       select case (ctrlCopy%input(iInput)%engine%args(1)%p%entity)
+       case (POS_p) ! find dintydt(j), dy(j), ddydt(j)
+          ctrlProps(:,1,i) = duTable(1,:)
+          ctrlProps(:,2,i) = duTable(2,:)
+          ctrlProps(:,3,i) = duTable(3,:)
+       case (VEL_p) ! find dintydt(j), dy(j), ddydt(j)
+          ctrlProps(:,2,i) = duTable(1,:)
+          ctrlProps(:,3,i) = duTable(2,:)
+          ctrlProps(:,4,i) = duTable(3,:)
+       case (ACC_p) ! find dintydt(j), dy(j)
+          ctrlProps(:,3,i) = duTable(1,:)
+          ctrlProps(:,4,i) = duTable(2,:)
+       case default
+          !! Error
+       end select
     end do
 
     !! Final reset time
@@ -1042,7 +1024,7 @@ contains
     call DeallocateControlType(ctrlCopyCopy,ierr)
     if ( ierr /= 0 ) return
 
-    deallocate(uy0,uy,du,dyMatrix,invDyMatrix,duTable)
+    deallocate(y0,uy0,uy,du,duTable)
 
   end subroutine EstimateControllerProperties01
 
@@ -1206,8 +1188,7 @@ contains
     use ControlTypeModule
     use ControlRoutinesModule, only : IterateControlSystem
     use SensorTypeModule
-
-    implicit none
+    use DenseMatrixModule, only : solveAxB
 
     type(SystemType)   , intent(inout) :: sys
     type(MechanismType), intent(in)    :: mech
@@ -1261,17 +1242,15 @@ contains
     real(dp), allocatable :: dintydt(:)         !! definite integral of y with respect to time t
     real(dp), allocatable :: dintintydt(:)      !! definite double integral of y with respect to time t
     real(dp), allocatable :: dintintintydt(:)   !! definite triple integral of y with respect to time t
-    real(dp), allocatable :: dyMatrix(:,:,:)    !! matrix of perturbation parameters
-    real(dp), allocatable :: invDyMatrix(:,:,:) !! inverse of the dy-matrix
-    real(dp), allocatable :: duTable(:,:,:)     !! table for storing du-results
-    ! 										    !!(no. of outputs from controller,
-    !										    !! no. of perturbations on controller,
-    ! 										    !! no. of inputs to controller)
+    real(dp) :: dyMatrix(nPerturb,nPerturb)     !! matrix of perturbation parameters
+    real(dp), allocatable :: duTable(:,:)       !! table for storing du = u(y)-u(y0)
     integer :: ctrlSysMode = 3                  !! ctrlSysMode = 3 = controller integration
 
-    integer :: i, j, iInput, ErrorFlag
+    integer :: i, j, iInput
 
     !! --- Logic section ---
+
+    ctrlProps = 0.0_dp
 
     !! Reset constants
     i = 0
@@ -1292,8 +1271,7 @@ contains
     du = 0.0_dp
 
     !! Define dimensions for the du-table
-    allocate(duTable(numVregOut,nPerturb,numVregIn))
-    duTable = 0.0_dp
+    allocate(duTable(nPerturb,numVregOut), STAT=ierr)
 
     !! Store the initial values of the time
     orgTime = sys%time
@@ -1323,7 +1301,6 @@ contains
     end do
 
     !! Depending on sensor input, there are 3 various ways to perturb the system
-    allocate(dyMatrix(nPerturb,nPerturb,numVregIn),invDyMatrix(nPerturb,nPerturb,numVregIn))
     do i = 1, numVregIn
        sensor => ctrlCopy%input(i)%engine%args(1)%p
        if (sensor%entity == POS_p) then
@@ -1341,10 +1318,10 @@ contains
              ddydt(j) = (dy2(j)-dy1(j))/dt(j)
              dd2ydt2(j) = (dy2(j)-2*dy1(j))/dt(j)**2
 
-             dyMatrix(j,1,i) = dintydt(j)
-             dyMatrix(j,2,i) = dy2(j)
-             dyMatrix(j,3,i) = ddydt(j)
-             dyMatrix(j,4,i) = dd2ydt2(j)
+             dyMatrix(j,1) = dintydt(j)
+             dyMatrix(j,2) = dy2(j)
+             dyMatrix(j,3) = ddydt(j)
+             dyMatrix(j,4) = dd2ydt2(j)
 
              !! The perturbation sequence
              !! To derive d(d2y/dt2), the system has to be perturbed three times (two + initial)
@@ -1365,20 +1342,11 @@ contains
              !! Calculate du
              du(:) = uy(:)-uy1(:)
              !! Store du-results in a table
-             duTable(:,j,i) = du(:)
+             duTable(j,:) = du(:)
              !! Reset time
              sys%time = t0
           end do
           deallocate(dt,dy1,dy2,y1,dintydt,ddydt,dd2ydt2)
-
-          !! Calculate controller properties
-          call FindInv(dyMatrix(:,:,i),invDyMatrix(:,:,i),nPerturb,ErrorFlag)
-          do j = 1, nPerturb
-             ctrlProps(:,j,i) = invDyMatrix(j,1,i)*duTable(:,1,i) &
-               &               +invDyMatrix(j,2,i)*duTable(:,2,i) &
-               &               +invDyMatrix(j,3,i)*duTable(:,3,i) &
-               &               +invDyMatrix(j,4,i)*duTable(:,4,i)
-          end do
 
        else if (sensor%entity == VEL_p) then
           allocate(dt(nPerturb),dy(nPerturb),dintydt(nPerturb),dintintydt(nPerturb),ddydt(nPerturb))
@@ -1391,10 +1359,10 @@ contains
              dintintydt(j) = ((1.0_dp/2.0_dp)*y0(i)+(1.0_dp/6.0_dp)*dy(j))*dt(j)**2
              ddydt(j) = dy(j)/dt(j)
 
-             dyMatrix(j,1,i) = dintintydt(j)
-             dyMatrix(j,2,i) = dintydt(j)
-             dyMatrix(j,3,i) = dy(j)
-             dyMatrix(j,4,i) = ddydt(j)
+             dyMatrix(j,1) = dintintydt(j)
+             dyMatrix(j,2) = dintydt(j)
+             dyMatrix(j,3) = dy(j)
+             dyMatrix(j,4) = ddydt(j)
 
              !! The perturbation sequence
              iInput = whichVregIn(i)
@@ -1408,20 +1376,11 @@ contains
              !! Calculate du
              du(:) = uy(:)-uy0(:)
              !! Store du-results in a table
-             duTable(:,j,i) = du(:)
+             duTable(j,:) = du(:)
              !! Reset time
              sys%time = t0
           end do
           deallocate(dt,dy,dintydt,dintintydt,ddydt)
-
-          !! Calculate controller properties
-          call FindInv(dyMatrix(:,:,i),invDyMatrix(:,:,i),nPerturb,ErrorFlag)
-          do j = 1, nPerturb
-             ctrlProps(:,j,i) = invDyMatrix(j,1,i)*duTable(:,1,i) &
-               &               +invDyMatrix(j,2,i)*duTable(:,2,i) &
-               &               +invDyMatrix(j,3,i)*duTable(:,3,i) &
-               &               +invDyMatrix(j,4,i)*duTable(:,4,i)
-          end do
 
        else if (sensor%entity == ACC_p) then
           allocate(dt(nPerturb),dy(nPerturb),dintydt(nPerturb),dintintydt(nPerturb), &
@@ -1435,10 +1394,10 @@ contains
              dintintydt(j) = ((1.0_dp/2.0_dp)*y0(i)+(1.0_dp/6.0_dp)*dy(j))*dt(j)**2
              dintintintydt(j) = ((1.0_dp/6.0_dp)*y0(i)+(1.0_dp/24.0_dp)*dy(j))*dt(j)**3
 
-             dyMatrix(j,1,i) = dintintintydt(j)
-             dyMatrix(j,2,i) = dintintydt(j)
-             dyMatrix(j,3,i) = dintydt(j)
-             dyMatrix(j,4,i) = dy(j)
+             dyMatrix(j,1) = dintintintydt(j)
+             dyMatrix(j,2) = dintintydt(j)
+             dyMatrix(j,3) = dintydt(j)
+             dyMatrix(j,4) = dy(j)
 
              !! The perturbation sequence
              iInput = whichVregIn(i)
@@ -1452,24 +1411,20 @@ contains
              !! Calculate du
              du(:) = uy(:)-uy0(:)
              !! Store du-results in a table
-             duTable(:,j,i) = du(:)
+             duTable(j,:) = du(:)
              !! Reset time
              sys%time = t0
           end do
           deallocate(dt,dy,dintydt,dintintydt,dintintintydt)
 
-          !! Calculate controller properties
-          call FindInv(dyMatrix(:,:,i),invDyMatrix(:,:,i),nPerturb,ErrorFlag)
-          do j = 1, nPerturb
-             ctrlProps(:,j,i) = invDyMatrix(j,1,i)*duTable(:,1,i) &
-               &               +invDyMatrix(j,2,i)*duTable(:,2,i) &
-               &               +invDyMatrix(j,3,i)*duTable(:,3,i) &
-               &               +invDyMatrix(j,4,i)*duTable(:,4,i)
-          end do
-
        else !! Error
 
        end if
+
+       !! Calculate controller properties
+       call solveAxB (dyMatrix,duTable,ierr)
+
+       ctrlProps(:,:,i) = transpose(duTable)
     end do
 
     !! Final reset time
@@ -1481,7 +1436,7 @@ contains
     call DeallocateControlType(ctrlCopyCopy,ierr)
     if ( ierr /= 0 ) return
 
-    deallocate(y0,uy0,uy1,uy,du,dyMatrix,invDyMatrix,duTable)
+    deallocate(y0,uy0,uy1,uy,du,duTable)
 
   end subroutine EstimateControllerProperties02
 
@@ -1541,8 +1496,7 @@ subroutine EstimateControllerProperties03(sys,mech,ctrl,msim,       &
     use ControlTypeModule
     use ControlRoutinesModule, only : IterateControlSystem
     use SensorTypeModule
-
-    implicit none
+    use DenseMatrixModule, only : solveAxB
 
     type(SystemType)   , intent(inout) :: sys
     type(MechanismType), intent(in)    :: mech
@@ -1596,18 +1550,15 @@ subroutine EstimateControllerProperties03(sys,mech,ctrl,msim,       &
     real(dp), allocatable :: dintydt(:)          !! definite integral of y with respect to time t
     real(dp), allocatable :: dintintydt(:)       !! definite double integral of y with respect to time t
     real(dp), allocatable :: dintintintydt(:)    !! definite triple integral of y with respect to time t
-    real(dp), allocatable :: dyMatrix(:,:,:)     !! matrix of perturbation parameters
-    real(dp), allocatable :: invDyMatrix(:,:,:)  !! inverse of the dy-matrix
-    real(dp), allocatable :: duTable(:,:,:)      !! table for storing du-results
-    ! 										     !!(no. of outputs from controller,
-    !										     !! no. of perturbations on controller,
-    ! 										     !! no. of inputs to controller)
-    real(dp), allocatable :: fullCtrlProps(:,:,:)!! Matrix of unnecessarily many controller properties
+    real(dp) :: dyMatrix(nPerturb,nPerturb)      !! matrix of perturbation parameters
+    real(dp), allocatable :: duTable(:,:)        !! table for storing du-results
     integer :: ctrlSysMode = 3                   !! ctrlSysMode = 3 = controller integration
 
-    integer :: i, j, iInput, ErrorFlag
+    integer :: i, j, iInput
 
     !! --- Logic section ---
+
+    ctrlProps = 0.0_dp
 
     !! Reset constants
     i = 0
@@ -1628,12 +1579,7 @@ subroutine EstimateControllerProperties03(sys,mech,ctrl,msim,       &
     du = 0.0_dp
 
     !! Define dimensions of tables
-    allocate(duTable(numVregOut,nPerturb,numVregIn),dyMatrix(nPerturb,nPerturb,numVregIn), &
-         &   invDyMatrix(nPerturb,nPerturb,numVregIn),fullCtrlProps(numVregOut,nPerturb,numVregIn))
-    duTable       = 0.0_dp
-    fullCtrlProps = 0.0_dp
-    dyMatrix      = 0.0_dp
-    invDyMatrix   = 0.0_dp
+    allocate(duTable(nPerturb,numVregOut), STAT=ierr)
 
     allocate(dt(nPerturb),dy1(nPerturb),dy2(nPerturb),y1(nPerturb),          &
          &   dintydt(nPerturb),dintintydt(nPerturb),dintintintydt(nPerturb), &
@@ -1682,12 +1628,12 @@ subroutine EstimateControllerProperties03(sys,mech,ctrl,msim,       &
           ddydt(j) = (dy2(j)-dy1(j))/dt(j)
           dd2ydt2(j) = (dy2(j)-2*dy1(j))/dt(j)**2
 
-          dyMatrix(j,1,i) = dintintintydt(j)
-          dyMatrix(j,2,i) = dintintydt(j)
-          dyMatrix(j,3,i) = dintydt(j)
-          dyMatrix(j,4,i) = dy2(j)
-          dyMatrix(j,5,i) = ddydt(j)
-          dyMatrix(j,6,i) = dd2ydt2(j)
+          dyMatrix(j,1) = dintintintydt(j)
+          dyMatrix(j,2) = dintintydt(j)
+          dyMatrix(j,3) = dintydt(j)
+          dyMatrix(j,4) = dy2(j)
+          dyMatrix(j,5) = ddydt(j)
+          dyMatrix(j,6) = dd2ydt2(j)
 
           !! The perturbation sequence
           !! To derive d(d2y/dt2), the system has to be perturbed three times (two + initial)
@@ -1708,40 +1654,33 @@ subroutine EstimateControllerProperties03(sys,mech,ctrl,msim,       &
           !! Calculate du
           du(:) = uy(:)-uy1(:)
           !! Store du-results in a table
-          duTable(:,j,i) = du(:)
+          duTable(j,:) = du(:)
           !! Reset time
           sys%time = t0
        end do
 
        !! Calculate controller properties
-       call FindInv(dyMatrix(:,:,i),invDyMatrix(:,:,i),nPerturb,ErrorFlag)
-       do j = 1, nPerturb
-          fullCtrlProps(:,j,i) = invDyMatrix(j,1,i)*duTable(:,1,i) &
-            &                   +invDyMatrix(j,2,i)*duTable(:,2,i) &
-            &                   +invDyMatrix(j,3,i)*duTable(:,3,i) &
-            &                   +invDyMatrix(j,4,i)*duTable(:,4,i) &
-            &                   +invDyMatrix(j,5,i)*duTable(:,5,i) &
-            &                   +invDyMatrix(j,6,i)*duTable(:,6,i)
-       end do
+       call solveAxB (dyMatrix,duTable,ierr)
 
-       sensor => ctrlCopy%input(i)%engine%args(1)%p
-       if (sensor%entity == POS_p) then      !! dintydt(j), dy(j), ddydt(j) and dd2ydt2(j)
-          ctrlProps(:,1,i) = fullCtrlProps(:,3,i)
-          ctrlProps(:,2,i) = fullCtrlProps(:,4,i)
-          ctrlProps(:,3,i) = fullCtrlProps(:,5,i)
-          ctrlProps(:,4,i) = fullCtrlProps(:,6,i)
-       else if (sensor%entity == VEL_p) then !! dintintydt(j), dintydt(j), dy(j), ddydt(j)
-          ctrlProps(:,1,i) = fullCtrlProps(:,2,i)
-          ctrlProps(:,2,i) = fullCtrlProps(:,3,i)
-          ctrlProps(:,3,i) = fullCtrlProps(:,4,i)
-          ctrlProps(:,4,i) = fullCtrlProps(:,5,i)
-       else if (sensor%entity == ACC_p) then !! dintintintydt(j), dintintydt(j), dintydt(j), dy(j)
-          ctrlProps(:,1,i) = fullCtrlProps(:,1,i)
-          ctrlProps(:,2,i) = fullCtrlProps(:,2,i)
-          ctrlProps(:,3,i) = fullCtrlProps(:,3,i)
-          ctrlProps(:,4,i) = fullCtrlProps(:,4,i)
-       else !! Error
-       end if
+       select case (ctrlCopy%input(i)%engine%args(1)%p%entity)
+       case (POS_p) ! dintydt(j), dy(j), ddydt(j) and dd2ydt2(j)
+          ctrlProps(:,1,i) = duTable(3,:)
+          ctrlProps(:,2,i) = duTable(4,:)
+          ctrlProps(:,3,i) = duTable(5,:)
+          ctrlProps(:,4,i) = duTable(6,:)
+       case (VEL_p) ! dintintydt(j), dintydt(j), dy(j), ddydt(j)
+          ctrlProps(:,1,i) = duTable(2,:)
+          ctrlProps(:,2,i) = duTable(3,:)
+          ctrlProps(:,3,i) = duTable(4,:)
+          ctrlProps(:,4,i) = duTable(5,:)
+       case (ACC_p) ! dintintintydt(j), dintintydt(j), dintydt(j), dy(j)
+          ctrlProps(:,1,i) = duTable(1,:)
+          ctrlProps(:,2,i) = duTable(2,:)
+          ctrlProps(:,3,i) = duTable(3,:)
+          ctrlProps(:,4,i) = duTable(4,:)
+       case default
+          !! Error
+       end select
 
     end do
 
@@ -1754,7 +1693,8 @@ subroutine EstimateControllerProperties03(sys,mech,ctrl,msim,       &
     call DeallocateControlType(ctrlCopyCopy,ierr)
     if ( ierr /= 0 ) return
 
-    deallocate(y0,uy0,uy1,uy,du,dyMatrix,invDyMatrix,duTable,dt,dy1,dy2,y1,dintydt,dintintydt, &
+    deallocate(uy0,uy1,uy,duTable)
+    deallocate(y0,du,dt,dy1,dy2,y1,dintydt,dintintydt, &
            &   dintintintydt,ddydt,dd2ydt2)
 
   end subroutine EstimateControllerProperties03
@@ -1813,8 +1753,7 @@ subroutine EstimateControllerProperties03(sys,mech,ctrl,msim,       &
     use ControlTypeModule
     use ControlRoutinesModule, only : IterateControlSystem
     use SensorTypeModule
-
-    implicit none
+    use DenseMatrixModule, only : solveAxB
 
     type(SystemType)   , intent(inout) :: sys
     type(MechanismType), intent(in)    :: mech
@@ -1863,18 +1802,15 @@ subroutine EstimateControllerProperties03(sys,mech,ctrl,msim,       &
     real(dp), allocatable :: dintydt(:)          !! definite integral of y with respect to time t
     real(dp), allocatable :: dintintydt(:)       !! definite double integral of y with respect to time t
     real(dp), allocatable :: dintintintydt(:)    !! definite triple integral of y with respect to time t
-    real(dp), allocatable :: dyMatrix(:,:,:)     !! matrix of perturbation parameters
-    real(dp), allocatable :: invDyMatrix(:,:,:)  !! inverse of the dy-matrix
-    real(dp), allocatable :: duTable(:,:,:)      !! table for storing du-results
-    ! 										     !!(no. of outputs from controller,
-    !										     !! no. of perturbations on controller,
-    ! 										     !! no. of inputs to controller)
-    real(dp), allocatable :: fullCtrlProps(:,:,:)!! Matrix of unnecessarily many controller properties
+    real(dp) :: dyMatrix(nPerturb,nPerturb)      !! matrix of perturbation parameters
+    real(dp), allocatable :: duTable(:,:)        !! table for storing du = u(y)-u(y0)
     integer :: ctrlSysMode = 3                   !! ctrlSysMode = 3 = controller integration
 
-    integer :: i, ii, j, iInput, ErrorFlag
+    integer :: i, ii, j, iInput
 
     !! --- Logic section ---
+
+    ctrlProps = 0.0_dp
 
     !! Reset constants
     i = 0
@@ -1896,12 +1832,7 @@ subroutine EstimateControllerProperties03(sys,mech,ctrl,msim,       &
     du = 0.0_dp
 
     !! Define dimensions of tables
-    allocate(duTable(numVregOut,nPerturb,numVregIn),dyMatrix(nPerturb,nPerturb,numVregIn), &
-         &   invDyMatrix(nPerturb,nPerturb,numVregIn),fullCtrlProps(numVregOut,nPerturb,numVregIn))
-    duTable       = 0.0_dp
-    fullCtrlProps = 0.0_dp
-    dyMatrix      = 0.0_dp
-    invDyMatrix   = 0.0_dp
+    allocate(duTable(nPerturb,numVregOut), STAT=ierr)
 
     allocate(dt(nPerturb),dy(nPerturb),dintydt(nPerturb),dintintydt(nPerturb),dintintintydt(nPerturb),ddydt(nPerturb))
 
@@ -1948,11 +1879,11 @@ subroutine EstimateControllerProperties03(sys,mech,ctrl,msim,       &
           dintintintydt(j) = ((1.0_dp/6.0_dp)*y0(i)+(1.0_dp/24.0_dp)*dy(j))*dt(j)**3
           ddydt(j)         = dy(j)/dt(j)
 
-          dyMatrix(j,1,i) = dintintintydt(j)
-          dyMatrix(j,2,i) = dintintydt(j)
-          dyMatrix(j,3,i) = dintydt(j)
-          dyMatrix(j,4,i) = dy(j)
-          dyMatrix(j,5,i) = ddydt(j)
+          dyMatrix(j,1) = dintintintydt(j)
+          dyMatrix(j,2) = dintintydt(j)
+          dyMatrix(j,3) = dintydt(j)
+          dyMatrix(j,4) = dy(j)
+          dyMatrix(j,5) = ddydt(j)
 
           !! The perturbation sequence
           iInput = whichVregIn(i)
@@ -1970,39 +1901,32 @@ subroutine EstimateControllerProperties03(sys,mech,ctrl,msim,       &
           !! Calculate du
           du(:) = uy(:)-uy0(:)
           !! Store du-results in a table
-          duTable(:,j,i) = du(:)
+          duTable(j,:) = du(:)
           !! Reset time
           sys%time = orgTime+dt0
        end do
 
        !! Calculate controller properties
-       call FindInv(dyMatrix(:,:,i),invDyMatrix(:,:,i),nPerturb,ErrorFlag)
-       do j = 1, nPerturb
-          fullCtrlProps(:,j,i) = invDyMatrix(j,1,i)*duTable(:,1,i) &
-            &                   +invDyMatrix(j,2,i)*duTable(:,2,i) &
-            &                   +invDyMatrix(j,3,i)*duTable(:,3,i) &
-            &                   +invDyMatrix(j,4,i)*duTable(:,4,i) &
-            &                   +invDyMatrix(j,5,i)*duTable(:,5,i)
-       end do
+       call solveAxB (dyMatrix,duTable,ierr)
 
-       sensor => ctrlCopy%input(i)%engine%args(1)%p
-       if (sensor%entity == POS_p) then      !! find dintydt(j), dy(j), ddydt(j)
-          ctrlProps(:,1,i) = fullCtrlProps(:,3,i)
-          ctrlProps(:,2,i) = fullCtrlProps(:,4,i)
-          ctrlProps(:,3,i) = fullCtrlProps(:,5,i)
-          ctrlProps(:,4,i) = 0.0_dp
-       else if (sensor%entity == VEL_p) then !! find dintintydt(j), dintydt(j), dy(j), ddydt(j)
-          ctrlProps(:,1,i) = fullCtrlProps(:,2,i)
-          ctrlProps(:,2,i) = fullCtrlProps(:,3,i)
-          ctrlProps(:,3,i) = fullCtrlProps(:,4,i)
-          ctrlProps(:,4,i) = fullCtrlProps(:,5,i)
-       else if (sensor%entity == ACC_p) then !! find dintintintydt(j),dintintydt(j),dintydt(j), dy(j)
-          ctrlProps(:,1,i) = fullCtrlProps(:,1,i)
-          ctrlProps(:,2,i) = fullCtrlProps(:,2,i)
-          ctrlProps(:,3,i) = fullCtrlProps(:,3,i)
-          ctrlProps(:,4,i) = fullCtrlProps(:,4,i)
-       else !! Error
-       end if
+       select case (ctrlCopy%input(i)%engine%args(1)%p%entity)
+       case (POS_p) ! find dintydt(j), dy(j), ddydt(j)
+          ctrlProps(:,1,i) = duTable(3,:)
+          ctrlProps(:,2,i) = duTable(4,:)
+          ctrlProps(:,3,i) = duTable(5,:)
+       case (VEL_p) ! find dintintydt(j), dintydt(j), dy(j), ddydt(j)
+          ctrlProps(:,1,i) = duTable(2,:)
+          ctrlProps(:,2,i) = duTable(3,:)
+          ctrlProps(:,3,i) = duTable(4,:)
+          ctrlProps(:,4,i) = duTable(5,:)
+       case (ACC_p) ! find dintintintydt(j),dintintydt(j),dintydt(j), dy(j)
+          ctrlProps(:,1,i) = duTable(1,:)
+          ctrlProps(:,2,i) = duTable(2,:)
+          ctrlProps(:,3,i) = duTable(3,:)
+          ctrlProps(:,4,i) = duTable(4,:)
+       case default
+          !! Error
+       end select
 
     end do
 
@@ -2015,7 +1939,8 @@ subroutine EstimateControllerProperties03(sys,mech,ctrl,msim,       &
     call DeallocateControlType(ctrlCopyCopy,ierr)
     if ( ierr /= 0 ) return
 
-    deallocate(y0,uy0,uy,du,dyMatrix,invDyMatrix,duTable,dt,dintydt,dintintydt,dintintintydt,ddydt)
+    deallocate(uy0,uy,duTable)
+    deallocate(y0,du,dt,dintydt,dintintydt,dintintintydt,ddydt)
 
   end subroutine EstimateControllerProperties04
 
@@ -2236,7 +2161,7 @@ subroutine EstimateControllerProperties03(sys,mech,ctrl,msim,       &
        end do
 
        !! Calculate controller properties
-       call FindInv(dyMatrix(:,:,i),invDyMatrix(:,:,i),nPerturb,ErrorFlag)
+       !call FindInv(dyMatrix(:,:,i),invDyMatrix(:,:,i),nPerturb,ErrorFlag)
        do j = 1, nPerturb
           fullCtrlProps(:,j,i) = invDyMatrix(j,1,i)*duTable(:,1,i) &
             &                   +invDyMatrix(j,2,i)*duTable(:,2,i) &
@@ -2495,7 +2420,7 @@ subroutine EstimateControllerProperties03(sys,mech,ctrl,msim,       &
        end do
 
        !! Calculate controller properties
-       call FindInv(dyMatrix(:,:,i),invDyMatrix(:,:,i),nPerturb,ErrorFlag)
+       !call FindInv(dyMatrix(:,:,i),invDyMatrix(:,:,i),nPerturb,ErrorFlag)
        do j = 1, nPerturb
           fullCtrlProps(:,j,i) = invDyMatrix(j,1,i)*duTable(:,1,i) &
             &                   +invDyMatrix(j,2,i)*duTable(:,2,i) &
@@ -2754,7 +2679,7 @@ subroutine EstimateControllerProperties03(sys,mech,ctrl,msim,       &
        end do
 
        !! Calculate controller properties
-       call FindInv(dyMatrix(:,:,i),invDyMatrix(:,:,i),nPerturb,ErrorFlag)
+       !call FindInv(dyMatrix(:,:,i),invDyMatrix(:,:,i),nPerturb,ErrorFlag)
        do j = 1, nPerturb
           fullCtrlProps(:,j,i) = invDyMatrix(j,1,i)*duTable(:,1,i) &
             &                   +invDyMatrix(j,2,i)*duTable(:,2,i) &
@@ -3013,7 +2938,7 @@ subroutine EstimateControllerProperties03(sys,mech,ctrl,msim,       &
        end do
 
        !! Calculate controller properties
-       call FindInv(dyMatrix(:,:,i),invDyMatrix(:,:,i),nPerturb,ErrorFlag)
+       !call FindInv(dyMatrix(:,:,i),invDyMatrix(:,:,i),nPerturb,ErrorFlag)
        do j = 1, nPerturb
           fullCtrlProps(:,j,i) = invDyMatrix(j,1,i)*duTable(:,1,i) &
             &                   +invDyMatrix(j,2,i)*duTable(:,2,i) &
@@ -3272,7 +3197,7 @@ subroutine EstimateControllerProperties03(sys,mech,ctrl,msim,       &
        end do
 
        !! Calculate controller properties
-       call FindInv(dyMatrix(:,:,i),invDyMatrix(:,:,i),nPerturb,ErrorFlag)
+       !call FindInv(dyMatrix(:,:,i),invDyMatrix(:,:,i),nPerturb,ErrorFlag)
        do j = 1, nPerturb
           fullCtrlProps(:,j,i) = invDyMatrix(j,1,i)*duTable(:,1,i) &
             &                   +invDyMatrix(j,2,i)*duTable(:,2,i) &
@@ -3531,7 +3456,7 @@ subroutine EstimateControllerProperties03(sys,mech,ctrl,msim,       &
        end do
 
        !! Calculate controller properties
-       call FindInv(dyMatrix(:,:,i),invDyMatrix(:,:,i),nPerturb,ErrorFlag)
+       !call FindInv(dyMatrix(:,:,i),invDyMatrix(:,:,i),nPerturb,ErrorFlag)
        do j = 1, nPerturb
           fullCtrlProps(:,j,i) = invDyMatrix(j,1,i)*duTable(:,1,i) &
             &                   +invDyMatrix(j,2,i)*duTable(:,2,i) &
@@ -3790,7 +3715,7 @@ subroutine EstimateControllerProperties03(sys,mech,ctrl,msim,       &
        end do
 
        !! Calculate controller properties
-       call FindInv(dyMatrix(:,:,i),invDyMatrix(:,:,i),nPerturb,ErrorFlag)
+       !call FindInv(dyMatrix(:,:,i),invDyMatrix(:,:,i),nPerturb,ErrorFlag)
        do j = 1, nPerturb
           fullCtrlProps(:,j,i) = invDyMatrix(j,1,i)*duTable(:,1,i) &
             &                   +invDyMatrix(j,2,i)*duTable(:,2,i) &
@@ -3900,16 +3825,11 @@ subroutine EstimateControllerProperties03(sys,mech,ctrl,msim,       &
     real(dp), allocatable :: dintydt(:)          !! definite integral of y with respect to time t
     real(dp), allocatable :: dintintydt(:)       !! definite double integral of y with respect to time t
     real(dp), allocatable :: dintintintydt(:)    !! definite triple integral of y with respect to time t
-    real(dp), allocatable :: dyMatrix(:,:,:)     !! matrix of perturbation parameters
-    real(dp), allocatable :: invDyMatrix(:,:,:)  !! inverse of the dy-matrix
-    real(dp), allocatable :: duTable(:,:,:)      !! table for storing du-results
-    ! 										     !!(no. of outputs from controller,
-    !										     !! no. of perturbations on controller,
-    ! 										     !! no. of inputs to controller)
-    real(dp), allocatable :: fullCtrlProps(:,:,:)!! Matrix of unnecessarily many controller properties
+    real(dp) :: dyMatrix(nPerturb,nPerturb)      !! matrix of perturbation parameters
+    real(dp), allocatable :: duTable(:,:)        !! table for storing du = u(y)-u(y0)
     integer :: ctrlSysMode = 3                   !! ctrlSysMode = 3 = controller integration
 
-    integer :: i, j, iInput, ErrorFlag
+    integer :: i, j, iInput
 
     !! --- Logic section ---
 
@@ -3931,12 +3851,7 @@ subroutine EstimateControllerProperties03(sys,mech,ctrl,msim,       &
     du = 0.0_dp
 
     !! Define dimensions of tables
-    allocate(duTable(numVregOut,nPerturb,numVregIn),dyMatrix(nPerturb,nPerturb,numVregIn), &
-         &   invDyMatrix(nPerturb,nPerturb,numVregIn),fullCtrlProps(numVregOut,nPerturb,numVregIn))
-    duTable       = 0.0_dp
-    fullCtrlProps = 0.0_dp
-    dyMatrix      = 0.0_dp
-    invDyMatrix   = 0.0_dp
+    allocate(duTable(nPerturb,numVregOut), STAT=ierr)
 
     allocate(dt(nPerturb),dy(nPerturb),dintydt(nPerturb),dintintydt(nPerturb),dintintintydt(nPerturb),ddydt(nPerturb))
 
@@ -3971,7 +3886,7 @@ subroutine EstimateControllerProperties03(sys,mech,ctrl,msim,       &
 
           ddydt(j) = dy(j)/dt(j)
 
-          dyMatrix(j,1,i) = dintydt(j)
+          dyMatrix(j,1) = dintydt(j)
 
           !! The perturbation sequence
           iInput = whichVregIn(i)
@@ -3985,32 +3900,31 @@ subroutine EstimateControllerProperties03(sys,mech,ctrl,msim,       &
           !! Calculate du
           du(:) = uy(:)-uy0(:)
           !! Store du-results in a table
-          duTable(:,j,i) = du(:)
+          duTable(j,:) = du(:)
           !! Reset time
           sys%time = t0
        end do
 
        !! Calculate controller properties
-       call FindInv(dyMatrix(:,:,i),invDyMatrix(:,:,i),nPerturb,ErrorFlag)
        do j = 1, nPerturb
-          fullCtrlProps(:,j,i) = invDyMatrix(j,1,i)*duTable(:,1,i)
+          duTable(j,:) = (1.0_dp/dyMatrix(j,1)) * duTable(j,:)
        end do
 
        sensor => ctrlCopy%input(i)%engine%args(1)%p
        if (sensor%entity == POS_p) then      !! find dintydt(j), dy(j), ddydt(j)
-          ctrlProps(:,1,i) = fullCtrlProps(:,1,i)
+          ctrlProps(:,1,i) = duTable(1,:)
           ctrlProps(:,2,i) = 0.0_dp
           ctrlProps(:,3,i) = 0.0_dp
           ctrlProps(:,4,i) = 0.0_dp
        else if (sensor%entity == VEL_p) then !! find dintydt(j), dy(j), ddydt(j)
           ctrlProps(:,1,i) = 0.0_dp
-          ctrlProps(:,2,i) = fullCtrlProps(:,1,i)
+          ctrlProps(:,2,i) = duTable(1,:)
           ctrlProps(:,3,i) = 0.0_dp
           ctrlProps(:,4,i) = 0.0_dp
        else if (sensor%entity == ACC_p) then !! find dintydt(j), dy(j)
           ctrlProps(:,1,i) = 0.0_dp
           ctrlProps(:,2,i) = 0.0_dp
-          ctrlProps(:,3,i) = fullCtrlProps(:,1,i)
+          ctrlProps(:,3,i) = duTable(1,:)
           ctrlProps(:,4,i) = 0.0_dp
        else !! Error
        end if
@@ -4026,106 +3940,10 @@ subroutine EstimateControllerProperties03(sys,mech,ctrl,msim,       &
     call DeallocateControlType(ctrlCopyCopy,ierr)
     if ( ierr /= 0 ) return
 
-    deallocate(y0,uy0,uy,du,dyMatrix,invDyMatrix,duTable,dt,dintydt,dintintydt,dintintintydt,ddydt)
+    deallocate(uy0,uy,duTable)
+    deallocate(y0,du,dt,dintydt,dintintydt,dintintintydt,ddydt)
 
   end subroutine EstimateControllerProperties500
-
-
-  !Subroutine to find the inverse of a square matrix
-  !Author : Louisda16th a.k.a Ashwith J. Rego
-  !Reference : Algorithm has been well explained in:
-  !http://math.uww.edu/~mcfarlat/inverse.htm
-  !http://www.tutor.ms.unimelb.edu.au/matrix/matrix_inverse.html
-  SUBROUTINE FINDInv(matrix,inverse,n,errorflag)
-    IMPLICIT NONE
-    !Declarations
-    INTEGER, INTENT(IN) :: n
-    INTEGER, INTENT(OUT) :: errorflag  !Return error status. -1 for error, 0 for normal
-    REAL(dp), INTENT(IN), DIMENSION(n,n) :: matrix  !Input matrix
-    REAL(dp), INTENT(OUT), DIMENSION(n,n) :: inverse !Inverted matrix
-
-    LOGICAL :: FLAG = .TRUE.
-    INTEGER :: i, j, k, l
-    REAL(dp) :: m
-    REAL(dp), DIMENSION(n,2*n) :: augmatrix !augmented matrix
-
-    !Augment input matrix with an identity matrix
-    DO i = 1, n
-       DO j = 1, 2*n
-          IF (j <= n ) THEN
-             augmatrix(i,j) = matrix(i,j)
-          ELSE IF ((i+n) == j) THEN
-             augmatrix(i,j) = 1
-          Else
-             augmatrix(i,j) = 0
-          ENDIF
-       END DO
-    END DO
-
-    !Reduce augmented matrix to upper traingular form
-    DO k =1, n-1
-       IF (augmatrix(k,k) == 0) THEN
-          FLAG = .FALSE.
-          DO i = k+1, n
-             IF (augmatrix(i,k) /= 0) THEN
-                DO j = 1,2*n
-                   augmatrix(k,j) = augmatrix(k,j)+augmatrix(i,j)
-                END DO
-                FLAG = .TRUE.
-                EXIT
-             ENDIF
-             IF (FLAG .EQV. .FALSE.) THEN
-                PRINT*, "Matrix is non - invertible"
-                inverse = 0
-                errorflag = -1
-                return
-             ENDIF
-          END DO
-       ENDIF
-       DO j = k+1, n
-          m = augmatrix(j,k)/augmatrix(k,k)
-          DO i = k, 2*n
-             augmatrix(j,i) = augmatrix(j,i) - m*augmatrix(k,i)
-          END DO
-       END DO
-    END DO
-
-    !Test for invertibility
-    DO i = 1, n
-       IF (augmatrix(i,i) == 0) THEN
-          PRINT*, "Matrix is non - invertible"
-          inverse = 0
-          errorflag = -1
-          return
-       ENDIF
-    END DO
-
-    !Make diagonal elements as 1
-    DO i = 1 , n
-       m = augmatrix(i,i)
-       DO j = i , (2 * n)
-          augmatrix(i,j) = (augmatrix(i,j) / m)
-       END DO
-    END DO
-
-    !Reduced right side half of augmented matrix to identity matrix
-    DO k = n-1, 1, -1
-       DO i =1, k
-          m = augmatrix(i,k+1)
-          DO j = k, (2*n)
-             augmatrix(i,j) = augmatrix(i,j) -augmatrix(k+1,j) * m
-          END DO
-       END DO
-    END DO
-
-    !store answer
-    DO i =1, n
-       DO j = 1, n
-          inverse(i,j) = augmatrix(i,j+n)
-       END DO
-    END DO
-    errorflag = 0
-  END SUBROUTINE FINDinv
 
 
  !! Backup of old subroutine
@@ -4295,7 +4113,7 @@ subroutine EstimateControllerProperties03(sys,mech,ctrl,msim,       &
     end do
 
     !! Invert de-matrix
-    call FindInv(deMatrix,invDeMatrix,nPerturb,ErrorFlag)
+    !call FindInv(deMatrix,invDeMatrix,nPerturb,ErrorFlag)
 
     !! Start perturbation with time steps dt and input steps de
     do j = 1, nPerturb
@@ -4526,7 +4344,7 @@ subroutine EstimateControllerPropertiesOld(sys,mech,ctrl,msim,      &
           dyMatrix(j,3,i) = dydt(j)
        end do
        !! Invert dy-matrix
-       call FindInv(dyMatrix(:,:,i),invDyMatrix(:,:,i),nPerturb,ErrorFlag)
+       !call FindInv(dyMatrix(:,:,i),invDyMatrix(:,:,i),nPerturb,ErrorFlag)
     end do
 
 
@@ -4771,7 +4589,7 @@ subroutine EstimateControllerPropertiesOld(sys,mech,ctrl,msim,      &
        end do
 
        !! Calculate controller properties
-       call FindInv(dyMatrix(:,:,i),invDyMatrix(:,:,i),nPerturb,ErrorFlag)
+       !call FindInv(dyMatrix(:,:,i),invDyMatrix(:,:,i),nPerturb,ErrorFlag)
        do j = 1, nPerturb
           fullCtrlProps(:,j,i) = invDyMatrix(j,1,i)*duTable(:,1,i) &
             &                   +invDyMatrix(j,2,i)*duTable(:,2,i) &
