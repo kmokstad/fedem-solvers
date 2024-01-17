@@ -561,7 +561,6 @@ contains
 
     integer  :: i, ii, iForce, iS, ierr
     integer  :: iNode, iCin, iCout, iStart, iEnd, nPerturb, nStep
-    real(dp) :: eGrad
     real(dp), allocatable :: dScr(:,:)        !! Scratch for matrix multiply
 
 
@@ -592,15 +591,8 @@ contains
     pCS%Grad_CinWrtSensor = 0.0_dp
 
     do iS = 1, size(pCS%structToControlSensors)
-       call SensorGradient_wrt_disp(pCS%structToControlSensors(iS)%pSensor, &
-            &                       pCS%structToControlSensors(iS)%sensorGrad_wrt_disp, ierr)
-
-       eGrad = EngineRate(pCS%structToControlSensors(iS)%pCtrlPrm%engine,ierr)
-
-       do i = 1, size(pCS%structToControlSensors(iS)%sensorGrad_wrt_disp)
-          pCS%structToControlSensors(iS)%sensorGrad_wrt_disp(i) = &
-               & eGrad * pCS%structToControlSensors(iS)%sensorGrad_wrt_disp(i)
-       end do
+       call SensorGradient (pCS%structToControlSensors(iS)%pCtrlPrm, &
+            &               pCS%structToControlSensors(iS)%sensorGrad_wrt_disp, ierr)
 
        do iNode = 1,2
           if ( pCS%structToControlSensors(iS)%lNode(iNode) <= 0 ) cycle
