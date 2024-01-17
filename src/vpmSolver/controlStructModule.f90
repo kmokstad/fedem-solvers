@@ -18,7 +18,9 @@
 module ControlStructModule
 
   use MechanismTypeModule
-  use ControlTypeModule
+  use ControlTypeModule, only : CtrlPrm
+  use SensorTypeModule , only : SensorType, dp
+  use ForceTypeModule  , only : ForceType
 
   implicit none
 
@@ -60,8 +62,6 @@ module ControlStructModule
 
   type ControlStructType
 
-     type(idType) :: id
-
      integer :: ctrlSysEigFlag
 
      integer :: samElNum
@@ -69,9 +69,6 @@ module ControlStructModule
      integer :: nDOFs
      integer, pointer :: samMNPC(:)
      integer, pointer :: local_MADOF(:)
-
-     type(MechanismType),  pointer :: pMech
-     type(ControlType),    pointer :: pControl
 
      !! CONTROL PERTURBATION
 
@@ -112,57 +109,42 @@ module ControlStructModule
      real(dp), pointer :: SSEEMat(:,:)     !! steady-state error elimination matrix Q
 
      real(dp), pointer :: Grad_CinWrtSensor(:,:) !! Dim (nCin,nDofs) Consists of rows of sensorGrad_wrt_disp
-     real(dp), pointer :: Grad_CoutWrtCin(:,:)   !! Dim (nCout,nCin) What about mass, stiffness and damping
-
-     !!
      real(dp), pointer :: Grad_ForceWrtCout(:,:) !! Dim (nDofs,nCout) Consists of columns of forceGrad_wrt_cOut
 
      integer :: SSEEMatIsNonSymmetric
      integer :: stiffMatIsNonSymmetric
      integer :: dampMatIsNonSymmetric
      integer :: massMatIsNonSymmetric
-     integer :: anyMatIsNonSymmetric
 
   end type ControlStructType
 
 
-
 contains
 
-  subroutine NullifyControlStruct(ctrlStruct)
-    use IdTypeModule, only : nullifyId
+  !!============================================================================
+  !> @brief Initializes the control struct data type.
+  !>
 
-    type(controlStructType), intent(out) :: ctrlStruct
+  subroutine InitiateControlStruct (pCS,inputs,triads,joints,forces, &
+       &                            numVreg,numNod,ierr)
 
-    call NullifyId(ctrlStruct%id)
-    ctrlStruct%samElNum = 0
-    ctrlStruct%nDOFs = 0
-    nullify(ctrlStruct%pMech)
-    nullify(ctrlStruct%pControl)
+    use TriadTypeModule           , only : TriadType
+    use MasterSlaveJointTypeModule, only : MasterSlaveJointType
+    use SensorTypeModule          , only : TRIAD_p, RELATIVE_TRIAD_p
+    use SensorTypeModule          , only : JOINT_VARIABLE_p
+    use ForceTypeModule           , only : ForceType
+    use ReportErrorModule         , only : allocationError
 
-    nullify(ctrlStruct%massMat)
-    nullify(ctrlStruct%dampMat)
-    nullify(ctrlStruct%stiffMat)
+    type(ControlStructType)   , intent(inout)      :: pCS
+    type(CtrlPrm)             , intent(in), target :: inputs(:)
+    type(TriadType)           , intent(in), target :: triads(:)
+    type(MasterSlaveJointType), intent(in), target :: joints(:)
+    type(ForceType)           , intent(in), target :: forces(:)
+    integer                   , intent(in)         :: numVreg, numNod
+    integer                   , intent(out)        :: ierr
 
-  end subroutine NullifyControlStruct
+    !! Local variables
 
-
-  subroutine InitiateControlStruct(pCS)
-
-    !!==============================================================================
-    !! Initialize the control struct data type
-    !!
-    !!==============================================================================
-
-    use ForceTypeModule
-    use SensorTypeModule
-    use ForceRoutinesModule
-    use ControlRoutinesModule
-
-    type(ControlStructType), intent(inout) :: pCS
-
-    type(ForceType),            pointer :: pForce
-    type(CtrlPrm),              pointer :: pCtrlPrm
     type(StructSensorGradType), pointer :: pS
     type(ForceControlGradType), pointer :: pF
 
@@ -171,39 +153,31 @@ contains
     integer, allocatable :: iCout_from_allVreg(:)
     integer, pointer     :: tmpIdx(:)
 
-    integer :: i, n, nNodes, nDofs, ierr, iSize, iSAM, nElNodes, iStart, numVreg
-    integer :: iCin, iCout, nCin, nCout, whichVreg
+    integer :: i, n, iCin, iCout, iSAM, nElNodes, iStart, whichVreg
 
-    ierr   = 0
-    nNodes = 0
-    nDofs  = 0
+    !! --- Logic section ---
 
-    !! Initialize the input side
+    allocate(lNode_from_SAM_node(numNod), iCin_from_AllVreg(numVreg), STAT=ierr)
+    if (ierr /= 0) then
+       ierr = allocationError('InitiateControlStruct')
+       return
+    end if
 
-    iSize = (size(pCS%pMech%triads) + size(pCS%pMech%sups) + size(pCS%pMech%joints)) * 10
-    allocate( lNode_from_SAM_node(iSize))
     lNode_from_SAM_node = 0
-
-    numVreg = size(pCS%pControl%vreg)
-
-    allocate( iCin_from_AllVreg(numVreg) )
     iCin_from_AllVreg  = 0
 
 
     !! SENSOR side initialization
     !! Find the control input parameters that have structural sensors (triad dofs and joint dofs)
 
-    nNodes = 0
-    nDofs  = 0
-
-    call getCtrlParamsWithStructSensors(pCS%pControl%input,pCS%numStructCtrlParams, tmpIdx)
+    call getCtrlParamsWithStructSensors (inputs,pCS%numStructCtrlParams,tmpIdx)
     if (pCS%numStructCtrlParams <= 0 ) return
 
     allocate(pCS%structToControlSensors(pCS%numStructCtrlParams))
 
     do i = 1, pCS%numStructCtrlParams
        pS          => pCS%structToControlSensors(i)
-       pS%pCtrlPrm => pCS%pControl%input(tmpIdx(i))
+       pS%pCtrlPrm => inputs(tmpIdx(i))
 
        pS%iCin = 0  !! i.e. not set yet
        pS%whichVreg = pS%pCtrlPrm%var
@@ -214,15 +188,15 @@ contains
 
 
        if      (pS%pSensor%type == TRIAD_p) then
-          pS%pTriad1 => pCS%pMech%triads(pS%pSensor%index(1))
+          pS%pTriad1 => triads(pS%pSensor%index(1))
           nullify(pS%pTriad2)
           nullify(pS%pJoint)
           lNode_from_SAM_node(pS%pTriad1%samNodNum) = 1
 
        else if (pS%pSensor%type == RELATIVE_TRIAD_p) then
 
-          pS%pTriad1 => pCS%pMech%triads(pS%pSensor%index(1))
-          pS%pTriad2 => pCS%pMech%triads(pS%pSensor%index(2))
+          pS%pTriad1 => triads(pS%pSensor%index(1))
+          pS%pTriad2 => triads(pS%pSensor%index(2))
           nullify(pS%pJoint)
           lNode_from_SAM_node(pS%pTriad1%samNodNum) = 1
           lNode_from_SAM_node(pS%pTriad2%samNodNum) = 1
@@ -231,7 +205,7 @@ contains
 
           nullify(pS%pTriad1)
           nullify(pS%pTriad2)
-          pS%pJoint => pCS%pMech%joints(pS%pSensor%index(1))
+          pS%pJoint => joints(pS%pSensor%index(1))
           lNode_from_SAM_node(pS%pJoint%samNodNum) = 1
 
        else
@@ -270,14 +244,14 @@ contains
     allocate( iCout_from_AllVreg(numVreg) )
     iCout_from_AllVreg  = 0
 
-    call getCtrlOutForces (pCS%pMech%forces, pCS%numControlForces, tmpIdx)
+    call getCtrlOutForces (forces, pCS%numControlForces, tmpIdx)
     if (pCS%numControlForces <= 0) return
 
     allocate(pCS%controlForces(pCS%numControlForces))
 
     do i = 1, pCS%numControlForces
        pF         => pCS%controlForces(i)
-       pF%pForce  => pCS%pMech%forces(tmpIdx(i))
+       pF%pForce  => forces(tmpIdx(i))
 
        pF%iCout = 0 !! i.e. not yet set
        pF%whichVreg = pF%pForce%engine%args(1)%p%dof
@@ -397,20 +371,15 @@ contains
 
     iStart = 1
     do i = 1, size(pCS%local_MADOF)
-       nDofs = pCS%local_MADOF(i)
+       n = pCS%local_MADOF(i)
        pCS%local_MADOF(i) = iStart
-       iStart = iStart + nDofs
+       iStart = iStart + n
     end do
 
     !! Number of total dofs for this element
     pCS%nDOFs = pCS%local_MADOF(pCS%nNods+1)-1
 
-    nDofs = pCS%nDOFs
-    nCin  = pCS%numVregIn
-    nCout = pCS%numVregOut
-
     allocate(pCS%Grad_CinWrtSensor(pCS%numVregIn,pCS%nDofs))
-    allocate(pCS%Grad_CoutWrtCin(pCS%numVregOut,pCS%numVregIn))
     allocate(pCS%Grad_ForceWrtCout(pCS%nDofs,pCS%numVregOut))
     allocate(pCS%ctrlProps(pCS%numVregOut,4,pCS%numVregIn))
     allocate(pCS%massMat(pCS%nDofs,pCS%nDofs))
@@ -446,7 +415,6 @@ contains
   subroutine getCtrlParamsWithStructSensors (ctrlParams, numStructCtrlParams, &
        &                                     ctrlParamsWithStructSensors)
 
-    use ControlTypeModule, only : CtrlPrm
     use ReportErrorModule, only : allocationError
 
     type(CtrlPrm), target, intent(in)  :: ctrlParams(:)
@@ -559,23 +527,24 @@ contains
   end subroutine getCtrlOutForces
 
 
-  subroutine BuildStructControlJacobi(pCS,sys,sam)
-    !!===========================================================================
-    !!  Compute the gradient matrix of forces w.r.t. controller inputs
-    !!===========================================================================
+  !!============================================================================
+  !> @brief Computes the gradient matrices of forces w.r.t. controller inputs.
+  !>
 
+  subroutine BuildStructControlJacobi (pCS,ctrl,sys,msim,ierr)
+
+    use ControlTypeModule   , only : ControlType
+    use SystemTypeModule    , only : SystemType
     use ForceRoutinesModule
     use EngineRoutinesModule
-    use SystemTypeModule
-    use SamModule
-
-    implicit none
 
     type(ControlStructType), intent(inout) :: pCS
-    type(SystemType), intent(inout) :: sys
-    type(SamType), intent(in) :: sam
+    type(ControlType)      , intent(inout) :: ctrl
+    type(SystemType)       , intent(inout) :: sys
+    integer                , intent(in)    :: msim(:)
+    integer                , intent(out)   :: ierr
 
-    integer  :: i, ii, j, iForce, iS, ierr
+    integer  :: i, ii, iForce, iS
     integer  :: iNode, iCin, iCout, iStart, iEnd, nStep
     real(dp) :: eGrad
     real(dp), allocatable :: dScr(:,:)        !! Scratch for matrix multiply
@@ -640,39 +609,39 @@ contains
 
     select case (pCS%ctrlSysEigFlag)
     case (1) ! nPerturb = 3: P, I and D gains
-       call EstimateControllerProperties01 (sys, pCS%pMech, pCS%pControl, sam%mpar, &
+       call EstimateControllerProperties01 (sys, ctrl, msim, &
             &                               pCS%numVregIn, pCS%whichVregIn, &
             &                               pCS%numVregOut, pCS%whichVregOut, &
-            &                               3, pCS%ctrlProps, ierr)
+            &                               pCS%ctrlProps, ierr)
 
     case (2) ! nPerturb = 4
-       call EstimateControllerProperties02 (sys, pCS%pMech, pCS%pControl, sam%mpar, &
+       call EstimateControllerProperties02 (sys, ctrl, msim, &
             &                               pCS%numVregIn, pCS%whichVregIn, &
             &                               pCS%numVregOut, pCS%whichVregOut, &
-            &                               4, pCS%ctrlProps, ierr)
+            &                               pCS%ctrlProps, ierr)
 
     case (3) ! nPerturb = 6
-       call EstimateControllerProperties03 (sys, pCS%pMech, pCS%pControl, sam%mpar, &
+       call EstimateControllerProperties03 (sys, ctrl, msim, &
             &                               pCS%numVregIn, pCS%whichVregIn, &
             &                               pCS%numVregOut, pCS%whichVregOut, &
-            &                               6, pCS%ctrlProps, ierr)
+            &                               pCS%ctrlProps, ierr)
 
     case (4:8) ! nPerturb = 5
        nStep = pCS%ctrlSysEigFlag-3 ! nStep = 1...5
-       call EstimateControllerProperties04 (sys, pCS%pControl, sam%mpar, &
+       call EstimateControllerProperties04 (sys, ctrl, msim, &
             &                               pCS%numVregIn, pCS%whichVregIn, &
             &                               pCS%numVregOut, pCS%whichVregOut, &
             &                               nStep, pCS%ctrlProps, ierr)
 
     case (9:11) ! nPerturb = 5
        nStep = 10**(pCS%ctrlSysEigFlag-8) ! nStep = 10,100,1000
-       call EstimateControllerProperties04 (sys, pCS%pControl, sam%mpar, &
+       call EstimateControllerProperties04 (sys, ctrl, msim, &
             &                               pCS%numVregIn, pCS%whichVregIn, &
             &                               pCS%numVregOut, pCS%whichVregOut, &
             &                               nStep, pCS%ctrlProps, ierr)
 
     case (500) ! nPerturb = 1
-       call EstimateControllerProperties500 (sys, pCS%pControl, sam%mpar, &
+       call EstimateControllerProperties500 (sys, ctrl, msim, &
             &                                pCS%numVregIn, pCS%whichVregIn, &
             &                                pCS%numVregOut, pCS%whichVregOut, &
             &                                pCS%ctrlProps, ierr)
@@ -712,50 +681,10 @@ contains
     pCS%massMat  = pCS%massMat*(-1.0_dp)
 
     !! Check for symmetry
-    pCS%SSEEMatIsNonSymmetric = 0
-    pCS%stiffMatIsNonSymmetric = 0
-    pCS%dampMatIsNonSymmetric = 0
-    pCS%massMatIsNonSymmetric = 0
-    pCS%anyMatIsNonSymmetric = 0
-
-    outer: do i = 1,pCS%nDofs
-       inner: do j = i,pCS%nDofs
-
-          if (pCS%SSEEMatIsNonSymmetric == 0) then
-             if (pCS%SSEEMat(i,j) /= pCS%SSEEMat(j,i)) then
-             pCS%SSEEMatIsNonSymmetric = 1
-             pCS%anyMatIsNonSymmetric = 1
-             end if
-          end if
-
-          if (pCS%stiffMatIsNonSymmetric == 0) then
-             if (pCS%stiffMat(i,j) /= pCS%stiffMat(j,i)) then
-             pCS%stiffMatIsNonSymmetric = 1
-             pCS%anyMatIsNonSymmetric = 1
-             end if
-          end if
-
-          if (pCS%dampMatIsNonSymmetric == 0) then
-             if (pCS%dampMat(i,j) /= pCS%dampMat(j,i)) then
-             pCS%dampMatIsNonSymmetric = 1
-             pCS%anyMatIsNonSymmetric = 1
-             end if
-          end if
-
-          if (pCS%massMatIsNonSymmetric == 0) then
-             if (pCS%massMat(i,j) /= pCS%massMat(j,i)) then
-             pCS%massMatIsNonSymmetric = 1
-             pCS%anyMatIsNonSymmetric = 1
-             end if
-          end if
-
-          if (pCS%SSEEMatIsNonSymmetric == 1 .and. &
-          &   pCS%stiffMatIsNonSymmetric == 1 .and. &
-          &   pCS%dampMatIsNonSymmetric == 1 .and. &
-          &   pCS%massMatIsNonSymmetric == 1) exit outer
-
-       end do inner
-    end do outer
+    pCS%SSEEMatIsNonSymmetric  = isNonSymmetric(pCS%SSEEMat)
+    pCS%stiffMatIsNonSymmetric = isNonSymmetric(pCS%stiffMat)
+    pCS%dampMatIsNonSymmetric  = isNonSymmetric(pCS%dampMat)
+    pCS%massMatIsNonSymmetric  = isNonSymmetric(pCS%massMat)
 
 !    !! Symmetrize
 !    !! TODO,Magne: Create input option on this
@@ -774,13 +703,30 @@ contains
 
     deallocate(dScr)
 
+  contains
+
+    !> @brief Checks if the matrix @b A has non-symmetric terms.
+    function isNonSymmetric (A)
+      real(dp), intent(in) :: A(:,:)
+      integer :: i, j, isNonSymmetric
+      isNonSymmetric = 0
+      do i = 1, size(A,1)-1
+         do j = i+1, size(A,2)
+            if (abs(A(i,j)-A(j,i)) > 1.0e-15_dp) then
+               isNonSymmetric = 1
+               return
+            end if
+         end do
+      end do
+    end function isNonSymmetric
+
   end subroutine BuildStructControlJacobi
 
 
-  subroutine EstimateControllerProperties01(sys,mech,ctrl,msim,       &
+  subroutine EstimateControllerProperties01 (sys, ctrl, msim, &
     &                                   numVregIn, whichVregIn,   &
     &                                   numVregOut, whichVregOut, &
-    &                                   nPerturb, ctrlProps, ierr)
+    &                                        ctrlProps, ierr)
 
     !!==========================================================================
     !! Purpose:
@@ -822,24 +768,18 @@ contains
     !! date/rev   : 25 Nov 2010 / 1.0
     !!==========================================================================
 
-    use KindModule
-    use ReportErrorModule
-    use SystemTypeModule   ,   only : SystemType
-    use MechanismTypeModule,   only : MechanismType
+    use SystemTypeModule , only : SystemType, dp
     use ControlTypeModule
-    use ControlRoutinesModule, only : IterateControlSystem
-    use SensorTypeModule
+    use SensorTypeModule , only : POS_p, VEL_p, ACC_p
     use DenseMatrixModule, only : solveAxB
 
     type(SystemType)   , intent(inout) :: sys
-    type(MechanismType), intent(in)    :: mech
     type(ControlType)  , intent(inout) :: ctrl
     integer            , intent(in)    :: msim(:)
     integer,             intent(in)    :: numVregIn         !! Number of vreg in to perturb
     integer,             intent(in)    :: whichVregIn(:)    !! Which vreg in to perturb
     integer,             intent(in)    :: numVregOut        !! Number of vreg out to read variation from
     integer,             intent(in)    :: whichVregOut(:)   !! Which vreg out to read variation from
-    integer,             intent(in)    :: nPerturb          !! number of perturbations on controller
     real(dp),            intent(out)   :: ctrlProps(:,:,:)  !! table for storing controller properties
     !						  		                        !!(no. of outputs from controller,
     !				 				                        !! no. of controller properties,
@@ -853,7 +793,8 @@ contains
 
     ! Local variables
 
-    type(SensorType)   , pointer :: sensor
+    integer, parameter :: nPerturb = 3 !< Number of controller perturbations
+
     type(ControlType)  , pointer :: ctrlCopy
     type(ControlType)  , pointer :: ctrlCopyCopy
 
@@ -871,7 +812,6 @@ contains
     !										     !! when input to controller is y0
     real(dp), allocatable :: uy(:)               !! u(y), output from controller
     !										     !! when input to controller is y = y0+dy
-    real(dp), allocatable :: du(:)               !! du = u(y)-u(y0)
     real(dp) :: dyMatrix(nPerturb,nPerturb)      !! matrix of perturbation parameters
     real(dp), allocatable :: duTable(:,:)        !! table for storing du = u(y)-u(y0)
     integer :: ctrlSysMode = 3                   !! ctrlSysMode = 3 = controller integration
@@ -900,15 +840,8 @@ contains
     dintydt = 0.0_dp
     ddydt   = 0.0_dp
 
-    !! Define length for arrays
-    allocate(y0(numVregIn),uy0(numVregOut),uy(numVregOut),du(numVregOut))
-    y0  = 0.0_dp
-    uy0 = 0.0_dp
-    uy  = 0.0_dp
-    du  = 0.0_dp
-
-    !! Define dimensions of tables
-    allocate(duTable(nPerturb,numVregOut), STAT=ierr)
+    allocate(y0(numVregIn),uy0(numVregOut),uy(numVregOut), &
+         &   duTable(nPerturb,numVregOut), STAT=ierr)
 
     !! Store the initial values of the time
     orgTime = sys%time
@@ -951,10 +884,9 @@ contains
           call PerturbController(sys,ctrlCopyCopy,msim,iInput,dt,dy,numVregOut, &
                &                    whichVregOut,ctrlSysMode,uy,ierr)
           if ( ierr /= 0 ) return
-          !! Calculate du
-          du(:) = uy(:)-uy0(:)
-          !! Store du-results in a table
-          duTable(j,:) = du(:)
+
+          !! Calculate du=uy-uy0 and store in a table
+          duTable(j,:) = uy - uy0
        end do
 
        !! Calculate controller properties
@@ -986,7 +918,7 @@ contains
     call DeallocateControlType(ctrlCopyCopy,ierr)
     if ( ierr /= 0 ) return
 
-    deallocate(y0,uy0,uy,du,duTable)
+    deallocate(y0,uy0,uy,duTable)
 
   end subroutine EstimateControllerProperties01
 
@@ -1028,18 +960,16 @@ contains
     real(dp)         , intent(in)    :: dy                !! incremental step for use in du/dy
     integer          , intent(in)    :: numVregOut        !! number of outputs from the controller to read
     integer          , intent(in)    :: whichVregOut(:)   !! which outputs from the controller to read
-    !								 					  !! which are outputs from the controller
+    !                                                     !! which are outputs from the controller
     integer          , intent(in)    :: ctrlSysMode       !! ctrlSysMode = 3 = controller integration
-    real(dp)		 , intent(out)   :: uy(:)             !! u(y) = u(y0+dy), output from controller
+    real(dp)         , intent(out)   :: uy(:)             !! u(y) = u(y0+dy), output from controller
     !                                                     !! when input to controller is y = y0+dy
 
     integer          , intent(inout) :: ierr
 
     !! --- Local variables
 
-    integer :: i, j
-
-    logical :: bSetInput    !! switch to set if the controller should include the new value y=y+dy
+    integer :: i
 
     !! --- Logic section ---
     uy = 0.0_dp
@@ -1051,10 +981,9 @@ contains
     i = ctrl%input(iPerturb)%var !!TODO,bh: Check this
     ctrl%vreg(i) = ctrl%vreg(i) + dy
 
-    !! Iterate the controller with the new values for y (y = y0+dy) and t (t = t0+dt)
-    !! to derive the value of u(y)
-    bSetInput = .false.
-    call IterateControlSystem (sys,ctrl,ctrlSysMode,msim,ierr,bSetInput)
+    !! Iterate the controller with the new values for y (y = y0+dy)
+    !! and t (t = t0+dt), to derive the value of u(y)
+    call IterateControlSystem (sys,ctrl,ctrlSysMode,msim,ierr,setInput=.false.)
 
     !! Save the value of u(y) in an array
     do i = 1, numVregOut
@@ -1074,8 +1003,7 @@ contains
     use SamModule          , only : SamType
     use SysMatrixTypeModule, only : SysMatrixType
     use AsmExtensionModule , only : csAddEM
-    use reportErrorModule  , only : getErrorFile, reportError
-    use reportErrorModule  , only : error_p, debugFileOnly_p
+    use reportErrorModule  , only : reportError, debugFileOnly_p
 
     type(ControlStructType), intent(inout) :: pCS
     real(dp)               , intent(in)    :: elMat(:,:)
@@ -1083,12 +1011,7 @@ contains
     type(SamType)          , intent(in)    :: sam
     integer                , intent(out)   :: err
 
-    !! Local variables
-    integer           :: i, n, nDim, lpu
-
     !! --- Logic section ---
-
-    lpu = getErrorFile()
 
     !! Add this matrix to the system matrix
     call csAddEM (sam,pCS%samElNum,pCS%nDofs,elMat,sysMat,err)
@@ -1099,10 +1022,10 @@ contains
   end subroutine AddInControlStructMat
 
 
-  subroutine EstimateControllerProperties02(sys,mech,ctrl,msim,       &
+  subroutine EstimateControllerProperties02 (sys, ctrl, msim, &
     &                                   numVregIn, whichVregIn,   &
     &                                   numVregOut, whichVregOut, &
-    &                                   nPerturb, ctrlProps, ierr)
+    &                                        ctrlProps, ierr)
 
     !!==========================================================================
     !! Purpose:
@@ -1143,24 +1066,18 @@ contains
     !! date/rev   : 01 June 2010 / 1.0
     !!==========================================================================
 
-    use KindModule
-    use ReportErrorModule
-    use SystemTypeModule   ,   only : SystemType
-    use MechanismTypeModule,   only : MechanismType
+    use SystemTypeModule , only : SystemType, dp
     use ControlTypeModule
-    use ControlRoutinesModule, only : IterateControlSystem
-    use SensorTypeModule
+    use SensorTypeModule , only : POS_p, VEL_p, ACC_p
     use DenseMatrixModule, only : solveAxB
 
     type(SystemType)   , intent(inout) :: sys
-    type(MechanismType), intent(in)    :: mech
     type(ControlType)  , intent(inout) :: ctrl
     integer            , intent(in)    :: msim(:)
     integer,             intent(in)    :: numVregIn         !! Number of vreg in to perturb
     integer,             intent(in)    :: whichVregIn(:)    !! Which vreg in to perturb
     integer,             intent(in)    :: numVregOut        !! Number of vreg out to read variation from
     integer,             intent(in)    :: whichVregOut(:)   !! Which vreg out to read variation from
-    integer,             intent(in)    :: nPerturb          !! number of perturbations on controller
     real(dp),            intent(out)   :: ctrlProps(:,:,:)  !! table for storing controller properties
     !						  		                        !!(no. of outputs from controller,
     !				 				                        !! no. of controller properties,
@@ -1174,7 +1091,8 @@ contains
 
     ! Local variables
 
-    type(SensorType)   , pointer :: sensor
+    integer, parameter :: nPerturb = 4 !< Number of controller perturbations
+
     type(ControlType)  , pointer :: ctrlCopy
     type(ControlType)  , pointer :: ctrlCopyCopy
 
@@ -1189,7 +1107,6 @@ contains
     real(dp), allocatable :: uy1(:)             !! u(y1)
     real(dp), allocatable :: uy(:)              !! u(y), output from controller
     !										    !! when input to controller is y = y0+dy
-    real(dp), allocatable :: du(:)              !! du = u(y)-u(y0)
     real(dp), allocatable :: dt(:)              !! incremental time step
     real(dp), allocatable :: dy(:)              !! incremental controller input step
     real(dp), allocatable :: dy1(:)             !! incremental controller input step no. 1
@@ -1224,16 +1141,8 @@ contains
     call AllocateCopyControlType(ctrlCopy,ctrlCopyCopy,ierr) !! Allocate and copy
     if ( ierr /= 0 ) return
 
-    !! Define length for arrays y0, uy0, uy1, uy and du
-    allocate(y0(numVregIn),uy0(numVregOut),uy1(numVregOut),uy(numVregOut),du(numVregOut))
-    y0 = 0.0_dp
-    uy0 = 0.0_dp
-    uy1 = 0.0_dp
-    uy = 0.0_dp
-    du = 0.0_dp
-
-    !! Define dimensions for the du-table
-    allocate(duTable(nPerturb,numVregOut), STAT=ierr)
+    allocate(y0(numVregIn),uy0(numVregOut),uy1(numVregOut),uy(numVregOut), &
+         &   duTable(nPerturb,numVregOut), STAT=ierr)
 
     !! Store the initial values of the time
     orgTime = sys%time
@@ -1264,8 +1173,8 @@ contains
 
     !! Depending on sensor input, there are 3 various ways to perturb the system
     do i = 1, numVregIn
-       sensor => ctrlCopy%input(i)%engine%args(1)%p
-       if (sensor%entity == POS_p) then
+       select case (ctrlCopy%input(i)%engine%args(1)%p%entity)
+       case (POS_p)
           allocate(dt(nPerturb),dy1(nPerturb),dy2(nPerturb),y1(nPerturb),dintydt(nPerturb), &
                &   ddydt(nPerturb),dd2ydt2(nPerturb))
 
@@ -1301,16 +1210,14 @@ contains
                   &                    whichVregOut,ctrlSysMode,uy,ierr)
              if ( ierr /= 0 ) return
 
-             !! Calculate du
-             du(:) = uy(:)-uy1(:)
-             !! Store du-results in a table
-             duTable(j,:) = du(:)
+             !! Calculate du=uy-uy1 and store in a table
+             duTable(j,:) = uy - uy1
              !! Reset time
              sys%time = t0
           end do
           deallocate(dt,dy1,dy2,y1,dintydt,ddydt,dd2ydt2)
 
-       else if (sensor%entity == VEL_p) then
+       case (VEL_p)
           allocate(dt(nPerturb),dy(nPerturb),dintydt(nPerturb),dintintydt(nPerturb),ddydt(nPerturb))
 
           !! Establish dy-matrix
@@ -1335,16 +1242,14 @@ contains
                   &                    whichVregOut,ctrlSysMode,uy,ierr)
              if ( ierr /= 0 ) return
 
-             !! Calculate du
-             du(:) = uy(:)-uy0(:)
-             !! Store du-results in a table
-             duTable(j,:) = du(:)
+             !! Calculate du=uy-uy0 and store in a table
+             duTable(j,:) = uy - uy0
              !! Reset time
              sys%time = t0
           end do
           deallocate(dt,dy,dintydt,dintintydt,ddydt)
 
-       else if (sensor%entity == ACC_p) then
+       case (ACC_p)
           allocate(dt(nPerturb),dy(nPerturb),dintydt(nPerturb),dintintydt(nPerturb), &
                &   dintintintydt(nPerturb))
 
@@ -1370,18 +1275,16 @@ contains
                   &                    whichVregOut,ctrlSysMode,uy,ierr)
              if ( ierr /= 0 ) return
 
-             !! Calculate du
-             du(:) = uy(:)-uy0(:)
-             !! Store du-results in a table
-             duTable(j,:) = du(:)
+             !! Calculate du=uy-uy0 and store in a table
+             duTable(j,:) = uy - uy0
              !! Reset time
              sys%time = t0
           end do
           deallocate(dt,dy,dintydt,dintintydt,dintintintydt)
 
-       else !! Error
-
-       end if
+       case default
+          !! Error
+       end select
 
        !! Calculate controller properties
        call solveAxB (dyMatrix,duTable,ierr)
@@ -1398,15 +1301,15 @@ contains
     call DeallocateControlType(ctrlCopyCopy,ierr)
     if ( ierr /= 0 ) return
 
-    deallocate(y0,uy0,uy1,uy,du,duTable)
+    deallocate(y0,uy0,uy1,uy,duTable)
 
   end subroutine EstimateControllerProperties02
 
 
-subroutine EstimateControllerProperties03(sys,mech,ctrl,msim,       &
+  subroutine EstimateControllerProperties03 (sys, ctrl, msim, &
     &                                   numVregIn, whichVregIn,   &
     &                                   numVregOut, whichVregOut, &
-    &                                   nPerturb, ctrlProps, ierr)
+    &                                        ctrlProps, ierr)
 
     !!==========================================================================
     !! Purpose:
@@ -1451,24 +1354,18 @@ subroutine EstimateControllerProperties03(sys,mech,ctrl,msim,       &
     !! date/rev   : 01 June 2010 / 1.0
     !!==========================================================================
 
-    use KindModule
-    use ReportErrorModule
-    use SystemTypeModule   ,   only : SystemType
-    use MechanismTypeModule,   only : MechanismType
+    use SystemTypeModule , only : SystemType, dp
     use ControlTypeModule
-    use ControlRoutinesModule, only : IterateControlSystem
-    use SensorTypeModule
+    use SensorTypeModule , only : POS_p, VEL_p, ACC_p
     use DenseMatrixModule, only : solveAxB
 
     type(SystemType)   , intent(inout) :: sys
-    type(MechanismType), intent(in)    :: mech
     type(ControlType)  , intent(inout) :: ctrl
     integer            , intent(in)    :: msim(:)
     integer,             intent(in)    :: numVregIn         !! Number of vreg in to perturb
     integer,             intent(in)    :: whichVregIn(:)    !! Which vreg in to perturb
     integer,             intent(in)    :: numVregOut        !! Number of vreg out to read variation from
     integer,             intent(in)    :: whichVregOut(:)   !! Which vreg out to read variation from
-    integer,             intent(in)    :: nPerturb          !! number of perturbations on controller
     real(dp),            intent(out)   :: ctrlProps(:,:,:)  !! table for storing controller properties
     !						  		                        !!(no. of outputs from controller,
     !				 				                        !! no. of controller properties,
@@ -1482,7 +1379,8 @@ subroutine EstimateControllerProperties03(sys,mech,ctrl,msim,       &
 
     ! Local variables
 
-    type(SensorType)   , pointer :: sensor
+    integer, parameter :: nPerturb = 6 !< Number of controller perturbations
+
     type(ControlType)  , pointer :: ctrlCopy
     type(ControlType)  , pointer :: ctrlCopyCopy
 
@@ -1497,9 +1395,7 @@ subroutine EstimateControllerProperties03(sys,mech,ctrl,msim,       &
     real(dp), allocatable :: uy1(:)              !! u(y1)
     real(dp), allocatable :: uy(:)               !! u(y), output from controller
     !										     !! when input to controller is y = y0+dy
-    real(dp), allocatable :: du(:)               !! du = u(y)-u(y0)
     real(dp), allocatable :: dt(:)               !! incremental time step
-    real(dp), allocatable :: dy(:)               !! incremental controller input step
     real(dp), allocatable :: dy1(:)              !! incremental controller input step no. 1
     !                                            !! to be used when deriving d(d2y/dt2)
     real(dp), allocatable :: dy2(:)              !! incremental controller input step no. 2
@@ -1532,16 +1428,8 @@ subroutine EstimateControllerProperties03(sys,mech,ctrl,msim,       &
     call AllocateCopyControlType(ctrlCopy,ctrlCopyCopy,ierr) !! Allocate and copy
     if ( ierr /= 0 ) return
 
-    !! Define length for arrays y0, uy0, uy1, uy and du
-    allocate(y0(numVregIn),uy0(numVregOut),uy1(numVregOut),uy(numVregOut),du(numVregOut))
-    y0 = 0.0_dp
-    uy0 = 0.0_dp
-    uy1 = 0.0_dp
-    uy = 0.0_dp
-    du = 0.0_dp
-
-    !! Define dimensions of tables
-    allocate(duTable(nPerturb,numVregOut), STAT=ierr)
+    allocate(y0(numVregIn),uy0(numVregOut),uy1(numVregOut),uy(numVregOut), &
+         &   duTable(nPerturb,numVregOut), STAT=ierr)
 
     allocate(dt(nPerturb),dy1(nPerturb),dy2(nPerturb),y1(nPerturb),          &
          &   dintydt(nPerturb),dintintydt(nPerturb),dintintintydt(nPerturb), &
@@ -1613,10 +1501,8 @@ subroutine EstimateControllerProperties03(sys,mech,ctrl,msim,       &
                &                    whichVregOut,ctrlSysMode,uy,ierr)
           if ( ierr /= 0 ) return
 
-          !! Calculate du
-          du(:) = uy(:)-uy1(:)
-          !! Store du-results in a table
-          duTable(j,:) = du(:)
+          !! Calculate du=uy-uy1 and store in a table
+          duTable(j,:) = uy - uy1
           !! Reset time
           sys%time = t0
        end do
@@ -1656,7 +1542,7 @@ subroutine EstimateControllerProperties03(sys,mech,ctrl,msim,       &
     if ( ierr /= 0 ) return
 
     deallocate(uy0,uy1,uy,duTable)
-    deallocate(y0,du,dt,dy1,dy2,y1,dintydt,dintintydt, &
+    deallocate(y0,dt,dy1,dy2,y1,dintydt,dintintydt, &
            &   dintintintydt,ddydt,dd2ydt2)
 
   end subroutine EstimateControllerProperties03
@@ -1708,12 +1594,9 @@ subroutine EstimateControllerProperties03(sys,mech,ctrl,msim,       &
     !! date/rev   : 03 June 2010 / 1.0
     !!==========================================================================
 
-    use KindModule
-    use ReportErrorModule
-    use SystemTypeModule   ,   only : SystemType
+    use SystemTypeModule , only : SystemType, dp
     use ControlTypeModule
-    use ControlRoutinesModule, only : IterateControlSystem
-    use SensorTypeModule
+    use SensorTypeModule , only : POS_p, VEL_p, ACC_p
     use DenseMatrixModule, only : solveAxB
 
     type(SystemType)   , intent(inout) :: sys
@@ -1739,7 +1622,6 @@ subroutine EstimateControllerProperties03(sys,mech,ctrl,msim,       &
 
     integer, parameter :: nPerturb = 5 !< Number of controller perturbations
 
-    type(SensorType)   , pointer :: sensor
     type(ControlType)  , pointer :: ctrlCopy
     type(ControlType)  , pointer :: ctrlCopyCopy
 
@@ -1755,7 +1637,6 @@ subroutine EstimateControllerProperties03(sys,mech,ctrl,msim,       &
     !										     !! when input to controller is y0
     real(dp), allocatable :: uy(:)               !! u(y), output from controller
     !										     !! when input to controller is y = y0+dy
-    real(dp), allocatable :: du(:)               !! du = u(y)-u(y0)
     real(dp), allocatable :: dt(:)               !! incremental time step
     real(dp), allocatable :: dy(:)               !! incremental controller input step
     real(dp), allocatable :: ddydt(:)            !! d(dy/dt), 1st derivative of y
@@ -1784,15 +1665,8 @@ subroutine EstimateControllerProperties03(sys,mech,ctrl,msim,       &
     call AllocateCopyControlType(ctrlCopy,ctrlCopyCopy,ierr) !! Allocate and copy
     if ( ierr /= 0 ) return
 
-    !! Define length for arrays y0, uy0, uy1, uy and du
-    allocate(y0(numVregIn),uy0(numVregOut),uy(numVregOut),du(numVregOut))
-    y0 = 0.0_dp
-    uy0 = 0.0_dp
-    uy = 0.0_dp
-    du = 0.0_dp
-
-    !! Define dimensions of tables
-    allocate(duTable(nPerturb,numVregOut), STAT=ierr)
+    allocate(y0(numVregIn),uy0(numVregOut),uy(numVregOut), &
+         &   duTable(nPerturb,numVregOut), STAT=ierr)
 
     allocate(dt(nPerturb),dy(nPerturb),dintydt(nPerturb),dintintydt(nPerturb),dintintintydt(nPerturb),ddydt(nPerturb))
 
@@ -1858,10 +1732,8 @@ subroutine EstimateControllerProperties03(sys,mech,ctrl,msim,       &
              if ( ierr /= 0 ) return
           end do
 
-          !! Calculate du
-          du(:) = uy(:)-uy0(:)
-          !! Store du-results in a table
-          duTable(j,:) = du(:)
+          !! Calculate du=uy-uy0 and store in a table
+          duTable(j,:) = uy - uy0
           !! Reset time
           sys%time = orgTime+dt0
        end do
@@ -1900,7 +1772,7 @@ subroutine EstimateControllerProperties03(sys,mech,ctrl,msim,       &
     if ( ierr /= 0 ) return
 
     deallocate(uy0,uy,duTable)
-    deallocate(y0,du,dt,dintydt,dintintydt,dintintintydt,ddydt)
+    deallocate(y0,dt,dintydt,dintintydt,dintintintydt,ddydt)
 
   end subroutine EstimateControllerProperties04
 
@@ -1922,8 +1794,6 @@ subroutine EstimateControllerProperties03(sys,mech,ctrl,msim,       &
     use SystemTypeModule , only : SystemType, dp
     use ControlTypeModule
     use SensorTypeModule , only : POS_p, VEL_p, ACC_p
-
-    implicit none
 
     type(SystemType) , intent(inout) :: sys
     type(ControlType), intent(inout) :: ctrl
