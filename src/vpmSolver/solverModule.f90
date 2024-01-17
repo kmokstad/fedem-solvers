@@ -41,8 +41,8 @@ module solverModule
   type(SamType)      , save :: sam   !< Data for managing system matrix assembly
   type(ModesType)    , save :: modes !< Data for eigenmodes
   type(SystemType)   , save :: sys   !< System level model data
-  type(ControlType)  , save, target :: ctrl  !< Control system data
-  type(MechanismType), save, target :: mech  !< Mechanism objects of the model
+  type(ControlType)  , save :: ctrl  !< Control system data
+  type(MechanismType), save :: mech  !< Mechanism objects of the model
   type(SysMatrixType), save :: Amat  !< System matrix for external communication
 
   !> @brief Data for coupled control system and structure modal analysis.
@@ -196,8 +196,6 @@ contains
           return
        end if
        ctrlStructEl%ctrlSysEigFlag = nchar
-       ctrlStructEl%pMech    => mech
-       ctrlStructEl%pControl => ctrl
     else
        nullify(ctrlStructEl)
     end if
@@ -756,7 +754,7 @@ contains
        numEigSol = numEigSol + 1
        call writeProgress (' --> EIGENVALUE CALCULATIONS')
 
-       call eigenModes (sam,modes,sys,mech,ctrlStructEl,iprint,ierr)
+       call eigenModes (sam,modes,sys,mech,ctrl,ctrlStructEl,iprint,ierr)
        if (ierr < -1) then
           if (ierr < -10) then
              meqErr(1) = -ierr/10
@@ -1062,7 +1060,7 @@ contains
     numEigSol = numEigSol + 1
     call writeProgress (' --> EIGENVALUE CALCULATIONS')
 
-    call eigenModes (sam,modes,sys,mech,ctrlStructEl,iprint,ierr)
+    call eigenModes (sam,modes,sys,mech,ctrl,ctrlStructEl,iprint,ierr)
     if (ierr < -1) then
        if (ierr < -10) then
           meqErr(1) = -ierr/10

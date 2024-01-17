@@ -759,6 +759,7 @@ contains
   !> @param modes Eigenmode data
   !> @param sys System level model data
   !> @param mech Mechanism components of the model
+  !> @param[in] ctrl Control system data
   !> @param pCS Data for coupled control system and structure modal analysis
   !> @param[in] iprint Print switch for additional output
   !> @param[out] ierr Error flag
@@ -776,13 +777,14 @@ contains
   !>
   !> @callgraph @callergraph
 
-  subroutine eigenModes (sam,modes,sys,mech,pCS,iprint,ierr)
+  subroutine eigenModes (sam,modes,sys,mech,ctrl,pCS,iprint,ierr)
 
     use sprKindModule      , only : ik
     use SamModule          , only : SamType
     use ModesTypeModule    , only : ModesType
     use SystemTypeModule   , only : SystemType
     use MechanismTypeModule, only : MechanismType
+    use ControlTypeModule  , only : ControlType
     use ControlStructModule, only : ControlStructType
     use ControlStructModule, only : addInControlStructMat
     use ControlStructModule, only : BuildStructControlJacobi
@@ -803,6 +805,7 @@ contains
     type(ModesType)     , intent(inout) :: modes
     type(SystemType)    , intent(inout) :: sys
     type(MechanismType) , intent(inout) :: mech
+    type(ControlType)   , intent(inout) :: ctrl
     type(ControlStructType), pointer    :: pCS
     integer             , intent(in)    :: iprint
     integer             , intent(out)   :: ierr
@@ -836,7 +839,7 @@ contains
 
     if (associated(pCS)) then
        !! Call routine for df/dx for controller
-       call BuildStructControlJacobi(pCS,sys,sam)
+       call BuildStructControlJacobi(pCS,ctrl,sys,sam)
        !! Note: If the controller contains non-collocated sensors and actuators,
        !! the matrices will be unsymmetric. However, these will by the existing
        !! code be faulty symmetrizied
