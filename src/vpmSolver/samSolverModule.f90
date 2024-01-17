@@ -264,7 +264,6 @@ contains
     use MassTypeModule            , only : MassType
     use TireTypeModule            , only : TireType
     use ControlStructModule       , only : ControlStructType
-    use ControlStructModule       , only : InitiateControlStruct
     use MasterSlaveJointTypeModule, only : getJointId, GetPtrToOwner
     use allocationModule          , only : reAllocate
     use reportErrorModule         , only : AllocationError
@@ -356,7 +355,6 @@ contains
 
     !! Add control structure interaction as an element, if it exists
     if (associated(ctrlStructEl)) then
-       call InitiateControlStruct(ctrlStructEl)
        nels = nels + 1
        nnpc = nnpc + size(ctrlStructEl%samMNPC)
     end if

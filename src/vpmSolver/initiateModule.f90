@@ -459,10 +459,12 @@ contains
        goto 980
     end if
 
-    !! Add control system as an element if it exists
+    !! Initialize the control-structure modal analysis, if requested
     if (associated(ctrlStruct)) then
-       !! Initialize the control-structure modal analysis
-       call InitiateControlStruct (ctrlStruct)
+       call InitiateControlStruct (ctrlStruct, ctrl%input, &
+            &                      mech%triads, mech%joints, mech%forces, &
+            &                      size(ctrl%vreg), sam%nnod, err)
+       if (err < 0) goto 980
     end if
 
     !! Establish the SAM arrays MPMNPC and MMNPC (element topology)
