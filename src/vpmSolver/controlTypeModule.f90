@@ -65,7 +65,6 @@ module ControlTypeModule
 
   public :: CtrlPrm, ControlType, nullifyCtrl, deallocateCtrl, copyCtrl
   public :: ReadControlSystem, InitiateControl, hasControlElements, getSensor
-  public :: AllocateCopyControlType, DeallocateControlType, CopyControlType
   public :: WriteObject, writeCtrlSysHeader, writeCtrlSysDB
 
 
@@ -174,100 +173,6 @@ contains
     call nullifyCtrl (ctrl,.true.)
 
   end subroutine deallocateCtrl
-
-
-  subroutine AllocateCopyControlType(ctrlIn, pCtrlCopy, ierr)
-
-    !!=================================
-    !! Allocate a deep copy of ctrlToCopy
-    !!=================================
-
-    use reportErrorModule, only : AllocationError
-
-    type(ControlType),          intent(in)  :: ctrlIn
-    type(ControlType), pointer, intent(out) :: pCtrlCopy
-    integer,                    intent(out) :: ierr
-
-    !! --- Logic section
-
-    allocate(pCtrlCopy, STAT=ierr)
-    if (ierr /= 0) then
-       ierr = AllocationError('AllocateControlTypeCopy')
-       return
-    end if
-
-    allocate( &
-         & pCtrlCopy%input  ( size(ctrlIn%input  )), &
-         & pCtrlCopy%ireg   ( size(ctrlIn%ireg   )), &
-         & pCtrlCopy%rreg   ( size(ctrlIn%rreg   )), &
-         & pCtrlCopy%vreg   ( size(ctrlIn%vreg   )), &
-         & pCtrlCopy%vregId ( size(ctrlIn%vregId )), &
-         & pCtrlCopy%delay  ( size(ctrlIn%delay  )), &
-         & STAT=ierr)
-    if (ierr /= 0) then
-       ierr = AllocationError('AllocateControlTypeCopy')
-       return
-    end if
-
-    call CopyControlType(ctrlIn, pCtrlCopy)
-
-  end subroutine AllocateCopyControlType
-
-
-  subroutine DeallocateControlType(pCtrl,ierr)
-
-    !!=================================
-    !! Deallocate pCtrl
-    !!=================================
-
-    use reportErrorModule, only : AllocationError
-
-    type(ControlType), pointer, intent(inout) :: pCtrl
-    integer,                    intent(out)   :: ierr
-
-    !! --- Logic section
-
-    deallocate( &
-         & pCtrl%input  , &
-         & pCtrl%ireg   , &
-         & pCtrl%rreg   , &
-         & pCtrl%vreg   , &
-         & pCtrl%vregId , &
-         & pCtrl%delay  , &
-         & STAT=ierr)
-    if (ierr == 0) deallocate(pCtrl, STAT=ierr)
-    if (ierr /= 0) ierr = AllocationError('DeallocateControlType')
-
-  end subroutine DeallocateControlType
-
-
-  subroutine CopyControlType(ctrlIn, ctrlCopy)
-
-    !!=================================
-    !! Deep copy of ctrlToCopy
-    !!=================================
-
-    type(ControlType), intent(in)  :: ctrlIn
-    type(ControlType), intent(out) :: ctrlCopy
-
-    !! --- Logic section
-
-    ctrlCopy%input   = ctrlIn%input
-    ctrlCopy%vreg    = ctrlIn%vreg
-    ctrlCopy%vregId  = ctrlIn%vregId
-    ctrlCopy%saveVar = ctrlIn%saveVar
-
-    ctrlCopy%mpireg  = ctrlIn%mpireg
-    ctrlCopy%mprreg  = ctrlIn%mprreg
-    ctrlCopy%ireg    = ctrlIn%ireg
-    ctrlCopy%rreg    = ctrlIn%rreg
-    ctrlCopy%delay   = ctrlIn%delay
-
-#ifdef FT_HAS_EXTCTRL
-    ctrlCopy%extCtrlSys => ctrlIn%extCtrlSys
-#endif
-
-  end subroutine CopyControlType
 
 
   !!============================================================================
