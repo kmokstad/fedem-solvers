@@ -792,21 +792,15 @@ contains
 
     real(dp) :: orgTime                          !! original/initial value for the time
     real(dp) :: orgTimeStep                      !! original/initial value for the time step
-    real(dp) :: t0                               !! quazi-initial value for the time
     real(dp) :: dt0                              !! quazi-initial time step
     real(dp) :: dt                               !! incremental time step
     real(dp) :: dy                               !! incremental controller input step
-    real(dp) :: dintydt                          !! definite integral of y with respect to time t
-    real(dp) :: ddydt                            !! d(dy/dt), 1st derivative of y
-    !										     !! with respect to time t
-    real(dp), allocatable :: y0(:)               !! initial values of the controller inputs
-    real(dp), allocatable :: uy0(:)              !! u(y0), output from controller
-    !										     !! when input to controller is y0
-    real(dp), allocatable :: uy(:)               !! u(y), output from controller
-    !										     !! when input to controller is y = y0+dy
+    real(dp) :: dintydt                          !! definite integral of y with respect to time
+    real(dp) :: y0                               !! initial values of the controller inputs
+    real(dp), allocatable :: uy0(:)              !! u(y0), output from controller when input is y0
+    real(dp), allocatable :: uy(:)               !! u(y), output from controller when input is y = y0+dy
     real(dp) :: dyMatrix(nPerturb,nPerturb)      !! matrix of perturbation parameters
     real(dp), allocatable :: duTable(:,:)        !! table for storing du = u(y)-u(y0)
-    integer :: ctrlSysMode = 3                   !! ctrlSysMode = 3 = controller integration
 
     integer :: i, j, iInput
 
@@ -814,19 +808,7 @@ contains
 
     ctrlProps = 0.0_dp
 
-    !! Reset counters
-    i = 0   !! i used for numVregIn
-    j = 0   !! j used for nPerturb
-    iInput = 0
-
-    !! Reset variables
-    t0      = 0.0_dp
-    dt      = 0.0_dp
-    dy      = 0.0_dp
-    dintydt = 0.0_dp
-    ddydt   = 0.0_dp
-
-    allocate(y0(numVregIn),uy0(numVregOut),uy(numVregOut), &
+    allocate(uy0(numVregOut),uy(numVregOut), &
          &   duTable(nPerturb,numVregOut), STAT=ierr)
     if (ierr /= 0) then
        ierr = allocationError('EstimateControllerProperties01')
@@ -837,48 +819,42 @@ contains
     orgTime = sys%time
     orgTimeStep = sys%timeStep
 
-    !! Do one initial perturbation with dy = 0
-    dt0 = orgTimeStep*1.0E-1_dp   !! TODO Magne: Change this value?
-    t0 = orgTime+dt0
+    dt0 = orgTimeStep*0.1_dp   !! TODO Magne: Change this value?
+    sys%time = orgTime + dt0
 
     do i = 1, numVregIn
        iInput = whichVregIn(i)
-       sys%time = t0
-       sys%timeStep = dt0
-       dy = 0.0_dp
 
        call copyCtrl (ctrl,ctrlCopy,ierr)
        if (ierr < 0) goto 915
 
-       !! Initial perturbation
-       call PerturbController(sys,ctrlCopy,msim,iInput,dt0,dy,numVregOut, &
-            &                    whichVregOut,ctrlSysMode,uy0,ierr)
+       dy = 0.0_dp ! Initial perturbation with dy = 0
+       call PerturbController (sys,ctrlCopy,msim,iInput,dt0,dy, &
+            &                  numVregOut,whichVregOut,uy0,ierr)
+       if (ierr < 0) goto 915
+
        !! Save the value of y0
-       y0(i) = abs(ctrlCopy%vreg(iInput))
+       y0 = abs(ctrlCopy%vreg(iInput))
 
        !! Perturbation
        do j = 1, nPerturb
           !! Establish dy-matrix
-          dt = orgTimeStep*1.0E-1_dp*j
+          dt = orgTimeStep*0.1_dp*j
           dy = dt
-          dintydt = (y0(i)+0.5_dp*dy)*dt
-          ddydt = dy/dt
+          dintydt = (y0 + 0.5_dp*dy)*dt
 
           dyMatrix(j,1) = dintydt
           dyMatrix(j,2) = dy
-          dyMatrix(j,3) = ddydt
+          dyMatrix(j,3) = dy/dt
 
-          !! The perturbation sequence
           !! Reset current controller (ctrlCopyCopy) to original state (ctrlCopy)
           call copyCtrl (ctrlCopy,ctrlCopyCopy,ierr)
           if (ierr < 0) goto 915
 
-          sys%timeStep = dt
-          uy  = 0.0_dp
           !! Perturb
-          call PerturbController(sys,ctrlCopyCopy,msim,iInput,dt,dy,numVregOut, &
-               &                    whichVregOut,ctrlSysMode,uy,ierr)
-          if ( ierr /= 0 ) return
+          call PerturbController (sys,ctrlCopyCopy,msim,iInput,dt,dy, &
+               &                  numVregOut,whichVregOut,uy,ierr)
+          if (ierr < 0) goto 915
 
           !! Calculate du=uy-uy0 and store in a table
           duTable(j,:) = uy - uy0
@@ -886,6 +862,7 @@ contains
 
        !! Calculate controller properties
        call solveAxB (dyMatrix,duTable,ierr)
+       if (ierr < 0) goto 915
 
        select case (ctrlCopy%input(iInput)%engine%args(1)%p%entity)
        case (POS_p) ! find dintydt(j), dy(j), ddydt(j)
@@ -912,7 +889,7 @@ contains
 
     call deallocateCtrlCopy (ctrlCopy)
     call deallocateCtrlCopy (ctrlCopyCopy)
-    deallocate(y0,uy0,uy,duTable)
+    deallocate(uy0,uy,duTable)
     return
 
 915 call reportError (debugFileOnly_p,'EstimateControllerProperties01')
@@ -921,8 +898,8 @@ contains
   end subroutine EstimateControllerProperties01
 
 
-  subroutine PerturbController(sys,ctrl,msim,iPerturb,dt,dy,numVregOut, &
-       &                whichVregOut,ctrlSysMode,uy,ierr)
+  subroutine PerturbController (sys,ctrl,msim,iPerturb,dt,dy, &
+       &                        numVregOut,whichVregOut,uy,ierr)
 
     !!==========================================================================
     !! Purpose:
@@ -940,13 +917,9 @@ contains
     !! date/rev   : 18 Sept 2009 / 1.0
     !!==========================================================================
 
-
-    use KindModule
-    use ReportErrorModule
-    use SystemTypeModule   , only : SystemType
-    use ControlTypeModule  , only : ControlType
+    use SystemTypeModule     , only : SystemType, dp
+    use ControlTypeModule    , only : ControlType
     use ControlRoutinesModule, only : IterateControlSystem
-    use SensorTypeModule
 
     implicit none
 
@@ -959,18 +932,17 @@ contains
     integer          , intent(in)    :: numVregOut        !! number of outputs from the controller to read
     integer          , intent(in)    :: whichVregOut(:)   !! which outputs from the controller to read
     !                                                     !! which are outputs from the controller
-    integer          , intent(in)    :: ctrlSysMode       !! ctrlSysMode = 3 = controller integration
     real(dp)         , intent(out)   :: uy(:)             !! u(y) = u(y0+dy), output from controller
     !                                                     !! when input to controller is y = y0+dy
+    integer          , intent(out)   :: ierr
 
-    integer          , intent(inout) :: ierr
+    !! Local variables
 
-    !! --- Local variables
+    integer, parameter :: ctrlSysMode = 3 ! controller integration mode
 
     integer :: i
 
     !! --- Logic section ---
-    uy = 0.0_dp
 
     !! Change time step to dt
     sys%timeStep = dt
@@ -1098,44 +1070,34 @@ contains
 
     real(dp) :: orgTime                         !! original/initial value for the time
     real(dp) :: orgTimeStep                     !! original/initial value for the time step
-    real(dp) :: t0                              !! quazi-initial value for the time
     real(dp) :: dt0                             !! quazi-initial time step
     real(dp) :: dy0                             !! quazi-initial input perturbation, dy0 = 0
-    real(dp), allocatable :: y0(:)              !! initial values of the controller inputs
-    real(dp), allocatable :: uy0(:)             !! u(y0), output from controller
-    !										    !! when input to controller is y0
+    real(dp) :: dt              !! incremental time step
+    real(dp) :: dy              !! incremental controller input step
+    real(dp) :: dy1             !! incremental controller input step no. 1
+    !                                           !! to be used when deriving d(d2y/dt2)
+    real(dp) :: dy2             !! incremental controller input step no. 2
+    !                                           !! to be used when deriving d(d2y/dt2)
+    real(dp) :: y1              !! y1 = y0+dy1
+    real(dp) :: ddydt           !! d(dy/dt), 1st derivative of y with respect to time
+    real(dp) :: dd2ydt2         !! d(d2y/dt2), 2nd derivative of y with respect to time
+    real(dp) :: dintydt         !! definite integral of y with respect to time
+    real(dp) :: dintintydt      !! definite double integral of y with respect to time
+    real(dp) :: dintintintydt   !! definite triple integral of y with respect to time
+    real(dp) :: y0              !! initial values of the controller inputs
+    real(dp), allocatable :: uy0(:)             !! u(y0), output from controller when input is y0
     real(dp), allocatable :: uy1(:)             !! u(y1)
-    real(dp), allocatable :: uy(:)              !! u(y), output from controller
-    !										    !! when input to controller is y = y0+dy
-    real(dp), allocatable :: dt(:)              !! incremental time step
-    real(dp), allocatable :: dy(:)              !! incremental controller input step
-    real(dp), allocatable :: dy1(:)             !! incremental controller input step no. 1
-    !                                           !! to be used when deriving d(d2y/dt2)
-    real(dp), allocatable :: dy2(:)             !! incremental controller input step no. 2
-    !                                           !! to be used when deriving d(d2y/dt2)
-    real(dp), allocatable :: y1(:)              !! y1 = y0+dy1
-    real(dp), allocatable :: ddydt(:)           !! d(dy/dt), 1st derivative of y
-    !										    !! with respect to time t
-    real(dp), allocatable :: dd2ydt2(:)         !! d(d2y/dt2), 2nd derivative of y
-    !										    !! with respect to time t
-    real(dp), allocatable :: dintydt(:)         !! definite integral of y with respect to time t
-    real(dp), allocatable :: dintintydt(:)      !! definite double integral of y with respect to time t
-    real(dp), allocatable :: dintintintydt(:)   !! definite triple integral of y with respect to time t
+    real(dp), allocatable :: uy(:)              !! u(y), output from controller when input is y = y0+dy
     real(dp) :: dyMatrix(nPerturb,nPerturb)     !! matrix of perturbation parameters
     real(dp), allocatable :: duTable(:,:)       !! table for storing du = u(y)-u(y0)
-    integer :: ctrlSysMode = 3                  !! ctrlSysMode = 3 = controller integration
 
-    integer :: i, j, iInput
+    integer :: i, j
 
     !! --- Logic section ---
 
     ctrlProps = 0.0_dp
 
-    !! Reset constants
-    i = 0
-    j = 0
-
-    allocate(y0(numVregIn),uy0(numVregOut),uy1(numVregOut),uy(numVregOut), &
+    allocate(uy0(numVregOut),uy1(numVregOut),uy(numVregOut), &
          &   duTable(nPerturb,numVregOut), STAT=ierr)
     if (ierr /= 0) then
        ierr = allocationError('EstimateControllerProperties02')
@@ -1151,21 +1113,15 @@ contains
     if (ierr < 0) goto 915
 
     !! Do one time perturbation
-    dt0 = sys%timeStep*1.0E-1_dp   !! TODO Magne: Change this value?
-    t0 = sys%time+dt0
-    sys%time = t0
+    dt0 = sys%timeStep*0.1_dp   !! TODO Magne: Change this value?
     dy0 = 0.0_dp
+    sys%time = sys%time + dt0
+
     !! Start perturbation with time step dt0
     do i = 1, numVregIn
-       !! Perturb
-       iInput = whichVregIn(i)
-       call PerturbController(sys,ctrlCopy,msim,iInput,dt0,dy0,numVregOut, &
-            &                    whichVregOut,ctrlSysMode,uy,ierr)
-    end do
-
-    !! Save the value of y0 in an array
-    do i = 1, numVregIn
-       y0(i) = ctrlCopy%vreg(whichVregIn(i))
+       call PerturbController (sys,ctrlCopy,msim,whichVregIn(i),dt0,dy0, &
+            &                  numVregOut,whichVregOut,uy,ierr)
+       if (ierr < 0) goto 915
     end do
 
     !! Save the value of u(y0) in an array
@@ -1175,127 +1131,109 @@ contains
 
     !! Depending on sensor input, there are 3 various ways to perturb the system
     do i = 1, numVregIn
+       !! Save the value of y0
+       y0 = ctrlCopy%vreg(whichVregIn(i))
        select case (ctrlCopy%input(i)%engine%args(1)%p%entity)
        case (POS_p)
-          allocate(dt(nPerturb),dy1(nPerturb),dy2(nPerturb),y1(nPerturb),dintydt(nPerturb), &
-               &   ddydt(nPerturb),dd2ydt2(nPerturb))
-
           do j = 1, nPerturb
-
              !! Establish dy-matrix
-             dt(j) = orgTimeStep*1.0E-1_dp*j
-             dy1(j) = dt(j)
-             dy2(j) = dy1(j)*(-1)
-             y1(j) = y0(i)+dy1(j)
-             dintydt(j) = (y1(j)+(1.0_dp/2.0_dp)*dy2(j))*dt(j)
-             ddydt(j) = (dy2(j)-dy1(j))/dt(j)
-             dd2ydt2(j) = (dy2(j)-2*dy1(j))/dt(j)**2
+             dt  = orgTimeStep*0.1_dp*j
+             dy1 = dt
+             dy2 = -dy1
+             y1  = y0 + dy1
+             dintydt = (y1  + 0.5*dp*dy2)*dt
+             ddydt   = (dy2 -        dy1)/dt
+             dd2ydt2 = (dy2 - 2.0_dp*dy1)/(dt*dt)
 
-             dyMatrix(j,1) = dintydt(j)
-             dyMatrix(j,2) = dy2(j)
-             dyMatrix(j,3) = ddydt(j)
-             dyMatrix(j,4) = dd2ydt2(j)
+             dyMatrix(j,1) = dintydt
+             dyMatrix(j,2) = dy2
+             dyMatrix(j,3) = ddydt
+             dyMatrix(j,4) = dd2ydt2
 
-             !! The perturbation sequence
-             !! To derive d(d2y/dt2), the system has to be perturbed three times (two + initial)
-             iInput = whichVregIn(i)
              !! Reset current controller (ctrlCopyCopy) to original state (ctrlCopy)
              call copyCtrl (ctrlCopy,ctrlCopyCopy,ierr)
              if (ierr < 0) goto 915
 
+             !! To derive d(d2y/dt2), the system has to be perturbed three times (two + initial)
+
              !! First perturbation
-             call PerturbController(sys,ctrlCopyCopy,msim,iInput,dt(j),dy1(j),numVregOut, &
-                  &                    whichVregOut,ctrlSysMode,uy,ierr)
-             if ( ierr /= 0 ) return
+             call PerturbController (sys,ctrlCopyCopy,msim,whichVregIn(i),dt,dy1, &
+                  &                  numVregOut,whichVregOut,uy,ierr)
+             if (ierr < 0) goto 915
+
              !! Save the value of u(y1) in an array
-             uy1(:) = uy(:)
+             uy1 = uy
+
              !! Second perturbation
-             call PerturbController(sys,ctrlCopyCopy,msim,iInput,dt(j),dy2(j),numVregOut, &
-                  &                    whichVregOut,ctrlSysMode,uy,ierr)
-             if ( ierr /= 0 ) return
+             call PerturbController (sys,ctrlCopyCopy,msim,whichVregIn(i),dt,dy2, &
+                  &                  numVregOut,whichVregOut,uy,ierr)
+             if (ierr < 0) goto 915
 
              !! Calculate du=uy-uy1 and store in a table
              duTable(j,:) = uy - uy1
-             !! Reset time
-             sys%time = t0
           end do
-          deallocate(dt,dy1,dy2,y1,dintydt,ddydt,dd2ydt2)
 
        case (VEL_p)
-          allocate(dt(nPerturb),dy(nPerturb),dintydt(nPerturb),dintintydt(nPerturb),ddydt(nPerturb))
-
-          !! Establish dy-matrix
           do j = 1, nPerturb
-             dt(j) = orgTimeStep*1.0E-1_dp*j
-             dy(j) = dt(j)
-             dintydt(j) = (y0(i)+(1.0_dp/2.0_dp)*dy(j))*dt(j)
-             dintintydt(j) = ((1.0_dp/2.0_dp)*y0(i)+(1.0_dp/6.0_dp)*dy(j))*dt(j)**2
-             ddydt(j) = dy(j)/dt(j)
+             !! Establish dy-matrix
+             dt = orgTimeStep*0.1_dp*j
+             dy = dt
+             dintydt    = (y0        + dy/2.0_dp)*dt
+             dintintydt = (y0/2.0_dp + dy/6.0_dp)*dt*dt
 
-             dyMatrix(j,1) = dintintydt(j)
-             dyMatrix(j,2) = dintydt(j)
-             dyMatrix(j,3) = dy(j)
-             dyMatrix(j,4) = ddydt(j)
+             dyMatrix(j,1) = dintintydt
+             dyMatrix(j,2) = dintydt
+             dyMatrix(j,3) = dy
+             dyMatrix(j,4) = dy/dt
 
-             !! The perturbation sequence
-             iInput = whichVregIn(i)
              !! Reset current controller (ctrlCopyCopy) to original state (ctrlCopy)
              call copyCtrl (ctrlCopy,ctrlCopyCopy,ierr)
              if (ierr < 0) goto 915
 
              !! Perturb
-             call PerturbController(sys,ctrlCopyCopy,msim,iInput,dt(j),dy(j),numVregOut, &
-                  &                    whichVregOut,ctrlSysMode,uy,ierr)
-             if ( ierr /= 0 ) return
+             call PerturbController (sys,ctrlCopyCopy,msim,whichVregIn(i),dt,dy, &
+                  &                  numVregOut,whichVregOut,uy,ierr)
+             if (ierr < 0) goto 915
 
              !! Calculate du=uy-uy0 and store in a table
              duTable(j,:) = uy - uy0
-             !! Reset time
-             sys%time = t0
           end do
-          deallocate(dt,dy,dintydt,dintintydt,ddydt)
 
        case (ACC_p)
-          allocate(dt(nPerturb),dy(nPerturb),dintydt(nPerturb),dintintydt(nPerturb), &
-               &   dintintintydt(nPerturb))
-
-          !! Establish dy-matrix
           do j = 1, nPerturb
-             dt(j) = orgTimeStep*1.0E-1_dp*j
-             dy(j) = dt(j)
-             dintydt(j) = (y0(i)+(1.0_dp/2.0_dp)*dy(j))*dt(j)
-             dintintydt(j) = ((1.0_dp/2.0_dp)*y0(i)+(1.0_dp/6.0_dp)*dy(j))*dt(j)**2
-             dintintintydt(j) = ((1.0_dp/6.0_dp)*y0(i)+(1.0_dp/24.0_dp)*dy(j))*dt(j)**3
+             !! Establish dy-matrix
+             dt = orgTimeStep*0.1_dp*j
+             dy = dt
+             dintydt       = (y0        + dy/2.0_dp )*dt
+             dintintydt    = (y0/2.0_dp + dy/6.0_dp )*dt*dt
+             dintintintydt = (y0/6.0_dp + dy/24.0_dp)*dt*dt*dt
 
-             dyMatrix(j,1) = dintintintydt(j)
-             dyMatrix(j,2) = dintintydt(j)
-             dyMatrix(j,3) = dintydt(j)
-             dyMatrix(j,4) = dy(j)
+             dyMatrix(j,1) = dintintintydt
+             dyMatrix(j,2) = dintintydt
+             dyMatrix(j,3) = dintydt
+             dyMatrix(j,4) = dy
 
-             !! The perturbation sequence
-             iInput = whichVregIn(i)
              !! Reset current controller (ctrlCopyCopy) to original state (ctrlCopy)
              call copyCtrl (ctrlCopy,ctrlCopyCopy,ierr)
              if (ierr < 0) goto 915
 
              !! Perturb
-             call PerturbController(sys,ctrlCopyCopy,msim,iInput,dt(j),dy(j),numVregOut, &
-                  &                    whichVregOut,ctrlSysMode,uy,ierr)
-             if ( ierr /= 0 ) return
+             call PerturbController (sys,ctrlCopyCopy,msim,whichVregIn(i),dt,dy, &
+                  &                  numVregOut,whichVregOut,uy,ierr)
+             if (ierr < 0) goto 915
 
              !! Calculate du=uy-uy0 and store in a table
              duTable(j,:) = uy - uy0
-             !! Reset time
-             sys%time = t0
           end do
-          deallocate(dt,dy,dintydt,dintintydt,dintintintydt)
 
        case default
           !! Error
+          goto 915
        end select
 
        !! Calculate controller properties
        call solveAxB (dyMatrix,duTable,ierr)
+       if (ierr < 0) goto 915
 
        ctrlProps(:,:,i) = transpose(duTable)
     end do
@@ -1308,7 +1246,7 @@ contains
 
     call deallocateCtrlCopy (ctrlCopy)
     call deallocateCtrlCopy (ctrlCopyCopy)
-    deallocate(y0,uy0,uy1,uy,duTable)
+    deallocate(uy0,uy1,uy,duTable)
     return
 
 915 call reportError (debugFileOnly_p,'EstimateControllerProperties02')
@@ -1399,52 +1337,40 @@ contains
 
     real(dp) :: orgTime                          !! original/initial value for the time
     real(dp) :: orgTimeStep                      !! original/initial value for the time step
-    real(dp) :: t0                               !! quazi-initial value for the time
     real(dp) :: dt0                              !! quazi-initial time step
     real(dp) :: dy0                              !! quazi-initial input perturbation, dy0 = 0
-    real(dp), allocatable :: y0(:)               !! initial values of the controller inputs
-    real(dp), allocatable :: uy0(:)              !! u(y0), output from controller
-    !										     !! when input to controller is y0
+    real(dp) :: dt               !! incremental time step
+    real(dp) :: dy1              !! incremental controller input step no. 1
+    !                                            !! to be used when deriving d(d2y/dt2)
+    real(dp) :: dy2              !! incremental controller input step no. 2
+    !                                            !! to be used when deriving d(d2y/dt2)
+    real(dp) :: y1               !! y1 = y0+dy1
+    real(dp) :: ddydt            !! d(dy/dt), 1st derivative of y
+    !										     !! with respect to time t
+    real(dp) :: dd2ydt2          !! d(d2y/dt2), 2nd derivative of y
+    !										     !! with respect to time t
+    real(dp) :: dintydt          !! definite integral of y with respect to time t
+    real(dp) :: dintintydt       !! definite double integral of y with respect to time t
+    real(dp) :: dintintintydt    !! definite triple integral of y with respect to time t
+    real(dp) :: y0               !! initial values of the controller inputs
+    real(dp), allocatable :: uy0(:)              !! u(y0), output from controller when input is y0
     real(dp), allocatable :: uy1(:)              !! u(y1)
-    real(dp), allocatable :: uy(:)               !! u(y), output from controller
-    !										     !! when input to controller is y = y0+dy
-    real(dp), allocatable :: dt(:)               !! incremental time step
-    real(dp), allocatable :: dy1(:)              !! incremental controller input step no. 1
-    !                                            !! to be used when deriving d(d2y/dt2)
-    real(dp), allocatable :: dy2(:)              !! incremental controller input step no. 2
-    !                                            !! to be used when deriving d(d2y/dt2)
-    real(dp), allocatable :: y1(:)               !! y1 = y0+dy1
-    real(dp), allocatable :: ddydt(:)            !! d(dy/dt), 1st derivative of y
-    !										     !! with respect to time t
-    real(dp), allocatable :: dd2ydt2(:)          !! d(d2y/dt2), 2nd derivative of y
-    !										     !! with respect to time t
-    real(dp), allocatable :: dintydt(:)          !! definite integral of y with respect to time t
-    real(dp), allocatable :: dintintydt(:)       !! definite double integral of y with respect to time t
-    real(dp), allocatable :: dintintintydt(:)    !! definite triple integral of y with respect to time t
+    real(dp), allocatable :: uy(:)               !! u(y), output from controller when input is y = y0+dy
     real(dp) :: dyMatrix(nPerturb,nPerturb)      !! matrix of perturbation parameters
     real(dp), allocatable :: duTable(:,:)        !! table for storing du-results
-    integer :: ctrlSysMode = 3                   !! ctrlSysMode = 3 = controller integration
 
-    integer :: i, j, iInput
+    integer :: i, j
 
     !! --- Logic section ---
 
     ctrlProps = 0.0_dp
 
-    !! Reset constants
-    i = 0
-    j = 0
-
-    allocate(y0(numVregIn),uy0(numVregOut),uy1(numVregOut),uy(numVregOut), &
+    allocate(uy0(numVregOut),uy1(numVregOut),uy(numVregOut), &
          &   duTable(nPerturb,numVregOut), STAT=ierr)
     if (ierr /= 0) then
        ierr = allocationError('EstimateControllerProperties03')
        return
     end if
-
-    allocate(dt(nPerturb),dy1(nPerturb),dy2(nPerturb),y1(nPerturb),          &
-         &   dintydt(nPerturb),dintintydt(nPerturb),dintintintydt(nPerturb), &
-         &   ddydt(nPerturb),dd2ydt2(nPerturb))
 
     !! Store the initial values of the time
     orgTime = sys%time
@@ -1455,21 +1381,15 @@ contains
     if (ierr < 0) goto 915
 
     !! Do one time perturbation
-    dt0 = sys%timeStep*1.0E-1_dp   !! TODO Magne: Change this value?
-    t0 = sys%time+dt0
-    sys%time = t0
+    dt0 = sys%timeStep*0.1_dp   !! TODO Magne: Change this value?
     dy0 = 0.0_dp
+    sys%time = sys%time + dt0
+
     !! Start perturbation with time step dt0
     do i = 1, numVregIn
-       !! Perturb
-       iInput = whichVregIn(i)
-       call PerturbController(sys,ctrlCopy,msim,iInput,dt0,dy0,numVregOut, &
-            &                    whichVregOut,ctrlSysMode,uy,ierr)
-    end do
-
-    !! Save the value of y0 in an array
-    do i = 1, numVregIn
-       y0(i) = ctrlCopy%vreg(whichVregIn(i))
+       call PerturbController (sys,ctrlCopy,msim,whichVregIn(i),dt0,dy0, &
+            &                  numVregOut,whichVregOut,uy0,ierr)
+       if (ierr < 0) goto 915
     end do
 
     !! Save the value of u(y0) in an array
@@ -1481,51 +1401,50 @@ contains
     !! 6 three-step perturbations
 
     do i = 1, numVregIn
+       !! Save the value of y0
+       y0 = ctrlCopy%vreg(whichVregIn(i))
        do j = 1, nPerturb
           !! Establish dy-matrix
-          dt(j) = orgTimeStep*1.0E-1_dp*j
-          dy1(j) = dt(j)
-          dy2(j) = dy1(j)*(-1)
-          y1(j) = y0(i)+dy1(j)
-          dintydt(j) = (y1(j)+(1.0_dp/2.0_dp)*dy2(j))*dt(j)
-          dintintydt(j) = ((1.0_dp/2.0_dp)*y1(j)+(1.0_dp/6.0_dp)*dy2(j))*dt(j)**2
-          dintintintydt(j) = ((1.0_dp/6.0_dp)*y1(j)+(1.0_dp/24.0_dp)*dy2(j))*dt(j)**3
-          ddydt(j) = (dy2(j)-dy1(j))/dt(j)
-          dd2ydt2(j) = (dy2(j)-2*dy1(j))/dt(j)**2
+          dt  = orgTimeStep*0.1_dp*j
+          dy1 = dt
+          dy2 = -dy1
+          y1  = y0 + dy1
+          dintydt       = (y1        + dy2/2.0_dp )*dt
+          dintintydt    = (y1/2.0_dp + dy2/6.0_dp )*dt*dt
+          dintintintydt = (y1/6.0_dp + dy2/24.0_dp)*dt*dt*dt
+          ddydt   = (dy2 -        dy1)/dt
+          dd2ydt2 = (dy2 - 2.0_dp*dy1)/(dt*dt)
 
-          dyMatrix(j,1) = dintintintydt(j)
-          dyMatrix(j,2) = dintintydt(j)
-          dyMatrix(j,3) = dintydt(j)
-          dyMatrix(j,4) = dy2(j)
-          dyMatrix(j,5) = ddydt(j)
-          dyMatrix(j,6) = dd2ydt2(j)
+          dyMatrix(j,1) = dintintintydt
+          dyMatrix(j,2) = dintintydt
+          dyMatrix(j,3) = dintydt
+          dyMatrix(j,4) = dy2
+          dyMatrix(j,5) = ddydt
+          dyMatrix(j,6) = dd2ydt2
 
-          !! The perturbation sequence
-          !! To derive d(d2y/dt2), the system has to be perturbed three times (two + initial)
-          iInput = whichVregIn(i)
           !! Reset current controller (ctrlCopyCopy) to original state (ctrlCopy)
           call copyCtrl (ctrlCopy,ctrlCopyCopy,ierr)
           if (ierr < 0) goto 915
 
+          !! To derive d(d2y/dt2), the system has to be perturbed three times (two + initial)
+
           !! First perturbation
-          call PerturbController(sys,ctrlCopyCopy,msim,iInput,dt(j),dy1(j),numVregOut, &
-               &                    whichVregOut,ctrlSysMode,uy,ierr)
-          if ( ierr /= 0 ) return
-          !! Save the value of u(y1) in an array
-          uy1(:) = uy(:)
+          call PerturbController (sys,ctrlCopyCopy,msim,whichVregIn(i),dt,dy1, &
+               &                  numVregOut,whichVregOut,uy1,ierr)
+          if (ierr < 0) goto 915
+
           !! Second perturbation
-          call PerturbController(sys,ctrlCopyCopy,msim,iInput,dt(j),dy2(j),numVregOut, &
-               &                    whichVregOut,ctrlSysMode,uy,ierr)
-          if ( ierr /= 0 ) return
+          call PerturbController (sys,ctrlCopyCopy,msim,whichVregIn(i),dt,dy2, &
+               &                  numVregOut,whichVregOut,uy,ierr)
+          if (ierr < 0) goto 915
 
           !! Calculate du=uy-uy1 and store in a table
           duTable(j,:) = uy - uy1
-          !! Reset time
-          sys%time = t0
        end do
 
        !! Calculate controller properties
        call solveAxB (dyMatrix,duTable,ierr)
+       if (ierr < 0) goto 915
 
        select case (ctrlCopy%input(i)%engine%args(1)%p%entity)
        case (POS_p) ! dintydt(j), dy(j), ddydt(j) and dd2ydt2(j)
@@ -1558,8 +1477,6 @@ contains
     call deallocateCtrlCopy (ctrlCopy)
     call deallocateCtrlCopy (ctrlCopyCopy)
     deallocate(uy0,uy1,uy,duTable)
-    deallocate(y0,dt,dy1,dy2,y1,dintydt,dintintydt, &
-           &   dintintintydt,ddydt,dd2ydt2)
     return
 
 915 call reportError (debugFileOnly_p,'EstimateControllerProperties03')
@@ -1649,46 +1566,33 @@ contains
 
     real(dp) :: orgTime                          !! original/initial value for the time
     real(dp) :: orgTimeStep                      !! original/initial value for the time step
-    real(dp) :: t0                               !! quazi-initial value for the time
     real(dp) :: dt0                              !! quazi-initial time step
     real(dp) :: dy0                              !! quazi-initial input perturbation, dy0 = 0
     real(dp) :: ddt                              !! incremental steps of dt
     real(dp) :: ddy                              !! incremental steps of dy
-    real(dp), allocatable :: y0(:)               !! initial values of the controller inputs
-    real(dp), allocatable :: uy0(:)              !! u(y0), output from controller
-    !										     !! when input to controller is y0
-    real(dp), allocatable :: uy(:)               !! u(y), output from controller
-    !										     !! when input to controller is y = y0+dy
-    real(dp), allocatable :: dt(:)               !! incremental time step
-    real(dp), allocatable :: dy(:)               !! incremental controller input step
-    real(dp), allocatable :: ddydt(:)            !! d(dy/dt), 1st derivative of y
-    !										     !! with respect to time t
-    real(dp), allocatable :: dintydt(:)          !! definite integral of y with respect to time t
-    real(dp), allocatable :: dintintydt(:)       !! definite double integral of y with respect to time t
-    real(dp), allocatable :: dintintintydt(:)    !! definite triple integral of y with respect to time t
+    real(dp) :: dt               !! incremental time step
+    real(dp) :: dy               !! incremental controller input step
+    real(dp) :: dintydt          !! definite integral of y with respect to time
+    real(dp) :: dintintydt       !! definite double integral of y with respect to time
+    real(dp) :: dintintintydt    !! definite triple integral of y with respect to time
+    real(dp) :: y0               !! initial values of the controller inputs
+    real(dp), allocatable :: uy0(:)              !! u(y0), output from controller when input is y0
+    real(dp), allocatable :: uy(:)               !! u(y), output from controller when input is y = y0+dy
     real(dp) :: dyMatrix(nPerturb,nPerturb)      !! matrix of perturbation parameters
     real(dp), allocatable :: duTable(:,:)        !! table for storing du = u(y)-u(y0)
-    integer :: ctrlSysMode = 3                   !! ctrlSysMode = 3 = controller integration
 
-    integer :: i, ii, j, iInput
+    integer :: i, ii, j
 
     !! --- Logic section ---
 
     ctrlProps = 0.0_dp
 
-    !! Reset constants
-    i = 0
-    ii = 0
-    j = 0
-
-    allocate(y0(numVregIn),uy0(numVregOut),uy(numVregOut), &
+    allocate(uy0(numVregOut),uy(numVregOut), &
          &   duTable(nPerturb,numVregOut), STAT=ierr)
     if (ierr /= 0) then
        ierr = allocationError('EstimateControllerProperties04')
        return
     end if
-
-    allocate(dt(nPerturb),dy(nPerturb),dintydt(nPerturb),dintintydt(nPerturb),dintintintydt(nPerturb),ddydt(nPerturb))
 
     !! Store the initial values of the time
     orgTime = sys%time
@@ -1699,24 +1603,19 @@ contains
     if (ierr < 0) goto 915
 
     !! Do one initial time perturbation
-    dt0 = sys%timeStep*1.0E-1_dp   !! TODO Magne: Change this value?
-    t0 = sys%time+dt0
-    sys%time = t0
+    dt0 = sys%timeStep*0.1_dp   !! TODO Magne: Change this value?
     dy0 = 0.0_dp
+    sys%time = sys%time + dt0
+
     !! Start perturbation with time step dt0
     do i = 1, numVregIn
        !! Perturb
-       iInput = whichVregIn(i)
        ddt = dt0/real(nStep,dp)
        do ii = 1, nStep
-          call PerturbController(sys,ctrlCopy,msim,iInput,ddt,dy0,numVregOut, &
-               &                    whichVregOut,ctrlSysMode,uy,ierr)
+          call PerturbController (sys,ctrlCopy,msim,whichVregIn(i),ddt,dy0, &
+               &                  numVregOut,whichVregOut,uy,ierr)
+          if (ierr < 0) goto 915
        end do
-    end do
-
-    !! Save the value of y0 in an array
-    do i = 1, numVregIn
-       y0(i) = ctrlCopy%vreg(whichVregIn(i))
     end do
 
     !! Save the value of u(y0) in an array
@@ -1728,44 +1627,42 @@ contains
     !! 6 three-step perturbations
 
     do i = 1, numVregIn
+       !! Save the value of y0
+       y0 = ctrlCopy%vreg(whichVregIn(i))
        do j = 1, nPerturb
           !! Establish dy-matrix
-          dt(j)            = orgTimeStep*1.0E-1_dp*j
-          dy(j)            = dt(j)
-          dintydt(j)       = ((1.0_dp/1.0_dp)*y0(i)+(1.0_dp/2.0_dp)*dy(j))*dt(j)
-          dintintydt(j)    = ((1.0_dp/2.0_dp)*y0(i)+(1.0_dp/6.0_dp)*dy(j))*dt(j)**2
-          dintintintydt(j) = ((1.0_dp/6.0_dp)*y0(i)+(1.0_dp/24.0_dp)*dy(j))*dt(j)**3
-          ddydt(j)         = dy(j)/dt(j)
+          dt            = orgTimeStep*0.1_dp*j
+          dy            = dt
+          dintydt       = (y0        + dy/2.0_dp )*dt
+          dintintydt    = (y0/2.0_dp + dy/6.0_dp )*dt*dt
+          dintintintydt = (y0/6.0_dp + dy/24.0_dp)*dt*dt*dt
 
-          dyMatrix(j,1) = dintintintydt(j)
-          dyMatrix(j,2) = dintintydt(j)
-          dyMatrix(j,3) = dintydt(j)
-          dyMatrix(j,4) = dy(j)
-          dyMatrix(j,5) = ddydt(j)
+          dyMatrix(j,1) = dintintintydt
+          dyMatrix(j,2) = dintintydt
+          dyMatrix(j,3) = dintydt
+          dyMatrix(j,4) = dy
+          dyMatrix(j,5) = dy/dt
 
-          !! The perturbation sequence
-          iInput = whichVregIn(i)
           !! Reset current controller (ctrlCopyCopy) to original state (ctrlCopy)
           call copyCtrl (ctrlCopy,ctrlCopyCopy)
           if (ierr < 0) goto 915
 
           !! First perturbation
-          ddt = dt(j)/real(nStep,dp)
-          ddy = dy(j)/real(nStep,dp)
+          ddt = dt/real(nStep,dp)
+          ddy = dy/real(nStep,dp)
           do ii = 1, nStep
-             call PerturbController(sys,ctrlCopyCopy,msim,iInput,ddt,ddy,numVregOut, &
-                  &                    whichVregOut,ctrlSysMode,uy,ierr)
-             if ( ierr /= 0 ) return
+             call PerturbController (sys,ctrlCopyCopy,msim,whichVregIn(i),ddt,ddy, &
+                  &                  numVregOut,whichVregOut,uy,ierr)
+             if (ierr < 0) goto 915
           end do
 
           !! Calculate du=uy-uy0 and store in a table
           duTable(j,:) = uy - uy0
-          !! Reset time
-          sys%time = orgTime+dt0
        end do
 
        !! Calculate controller properties
        call solveAxB (dyMatrix,duTable,ierr)
+       if (ierr < 0) goto 915
 
        select case (ctrlCopy%input(i)%engine%args(1)%p%entity)
        case (POS_p) ! find dintydt(j), dy(j), ddydt(j)
@@ -1797,7 +1694,6 @@ contains
     call deallocateCtrlCopy (ctrlCopy)
     call deallocateCtrlCopy (ctrlCopyCopy)
     deallocate(uy0,uy,duTable)
-    deallocate(y0,dt,dintydt,dintintydt,dintintintydt,ddydt)
     return
 
 915 call reportError (debugFileOnly_p,'EstimateControllerProperties04')
@@ -1850,8 +1746,6 @@ contains
     real(dp) :: ddydt       ! d(dy/dt), 1st derivative of y with respect to time t
     real(dp) :: dintydt     ! definite integral of y with respect to time t
 
-    integer, parameter :: ctrlSysMode = 3 ! = controller integration
-
     integer :: i, iEntity
 
     !! --- Logic section ---
@@ -1897,7 +1791,7 @@ contains
 
        !! Perturb the controller
        call PerturbController (sys,ctrlCopy,msim,whichVregIn(i),dt,dy, &
-            &                  numVregOut,whichVregOut,ctrlSysMode,uy,ierr)
+            &                  numVregOut,whichVregOut,uy,ierr)
        if (ierr < 0) goto 915
 
        iEntity = ctrlCopy%input(i)%engine%args(1)%p%entity
