@@ -782,6 +782,7 @@ contains
     use SystemTypeModule , only : SystemType, dp
     use ControlTypeModule, only : ControlType, copyCtrl
     use SensorTypeModule , only : POS_p, VEL_p, ACC_p
+    use DenseMatrixModule, only : solveAxB
     use ReportErrorModule, only : allocationError, reportError
     use ReportErrorModule, only : debugFileOnly_p
 
@@ -821,20 +822,14 @@ contains
     real(dp), allocatable :: uy0(:)              !! u(y0), output from controller when input is y0
     real(dp), allocatable :: uy(:)               !! u(y), output from controller when input is y = y0+dy
     real(dp) :: dyMatrix(nPerturb,nPerturb)      !! matrix of perturbation parameters
-    real(dp) :: invDyMatrix(nPerturb,nPerturb)   !! inverse of the dy-matrix
-    real(dp), allocatable :: duTable(:,:)        !! table for storing du = u(y)-u(y0)
-    ! 										     !!(no. of outputs from controller,
-    !										     !! no. of perturbations on controller,
-    ! 										     !! no. of inputs to controller)
-    real(dp), allocatable :: fullCtrlProps(:,:)!! Matrix of unnecessarily many controller properties
+    real(dp), allocatable :: fullCtrlProps(:,:)  !! Matrix of unnecessarily many controller properties
 
     integer :: i, j, iInput
 
     !! --- Logic section ---
 
     allocate(y0(numVregIn),uy0(numVregOut),uy(numVregOut), &
-         &   duTable(numVregOut,nPerturb), &
-         &   fullCtrlProps(numVregOut,nPerturb), STAT=ierr)
+         &   fullCtrlProps(nPerturb,numVregOut), STAT=ierr)
     if (ierr /= 0) then
        ierr = allocationError('EstimateControllerProperties01')
        return
@@ -882,35 +877,29 @@ contains
           if (ierr < 0) goto 915
 
           !! Calculate du and store in a table
-          duTable(:,j) = uy - uy0
+          fullCtrlProps(j,:) = uy - uy0
        end do
 
        !! Calculate controller properties
-       call FindInv (dyMatrix,invDyMatrix,nPerturb,ierr)
+       call solveAxB (dyMatrix,fullCtrlProps,ierr)
        if (ierr < 0) goto 915
-
-       do j = 1, nPerturb
-          fullCtrlProps(:,j) = invDyMatrix(j,1)*duTable(:,1) &
-               &             + invDyMatrix(j,2)*duTable(:,2) &
-               &             + invDyMatrix(j,3)*duTable(:,3)
-       end do
 
        select case (ctrlCopy%input(iInput)%engine%args(1)%p%entity)
        case (POS_p) ! find dintydt(j), dy(j), ddydt(j)
-          ctrlProps(:,1,i) = fullCtrlProps(:,1)
-          ctrlProps(:,2,i) = fullCtrlProps(:,2)
-          ctrlProps(:,3,i) = fullCtrlProps(:,3)
+          ctrlProps(:,1,i) = fullCtrlProps(1,:)
+          ctrlProps(:,2,i) = fullCtrlProps(2,:)
+          ctrlProps(:,3,i) = fullCtrlProps(3,:)
           ctrlProps(:,4,i) = 0.0_dp
        case (VEL_p) ! find dintydt(j), dy(j), ddydt(j)
           ctrlProps(:,1,i) = 0.0_dp
-          ctrlProps(:,2,i) = fullCtrlProps(:,1)
-          ctrlProps(:,3,i) = fullCtrlProps(:,2)
-          ctrlProps(:,4,i) = fullCtrlProps(:,3)
+          ctrlProps(:,2,i) = fullCtrlProps(1,:)
+          ctrlProps(:,3,i) = fullCtrlProps(2,:)
+          ctrlProps(:,4,i) = fullCtrlProps(3,:)
        case (ACC_p) ! find dintydt(j), dy(j)
           ctrlProps(:,1,i) = 0.0_dp
           ctrlProps(:,2,i) = 0.0_dp
-          ctrlProps(:,3,i) = fullCtrlProps(:,1)
-          ctrlProps(:,4,i) = fullCtrlProps(:,2)
+          ctrlProps(:,3,i) = fullCtrlProps(1,:)
+          ctrlProps(:,4,i) = fullCtrlProps(2,:)
        case default
           !! Error
        end select
@@ -924,7 +913,7 @@ contains
 
     call deallocateCtrlCopy (ctrlCopy)
     call deallocateCtrlCopy (ctrlCopyCopy)
-    deallocate(y0,uy0,uy,duTable,fullCtrlProps)
+    deallocate(y0,uy0,uy,fullCtrlProps)
     return
 
 915 call reportError (debugFileOnly_p,'EstimateControllerProperties01')
@@ -1074,6 +1063,7 @@ contains
     use SystemTypeModule , only : SystemType, dp
     use ControlTypeModule, only : ControlType, copyCtrl
     use SensorTypeModule , only : POS_p, VEL_p, ACC_p
+    use DenseMatrixModule, only : solveAxB
     use ReportErrorModule, only : allocationError, reportError
     use ReportErrorModule, only : debugFileOnly_p
 
@@ -1124,18 +1114,14 @@ contains
     real(dp), allocatable :: uy1(:)             !! u(y1)
     real(dp), allocatable :: uy(:)              !! u(y), output from controller when input is y = y0+dy
     real(dp) :: dyMatrix(nPerturb,nPerturb)     !! matrix of perturbation parameters
-    real(dp) :: invDyMatrix(nPerturb,nPerturb)  !! inverse of the dy-matrix
-    real(dp), allocatable :: duTable(:,:)       !! table for storing du = u(y)-u(y0)
-    ! 										    !!(no. of outputs from controller,
-    !										    !! no. of perturbations on controller,
-    ! 										    !! no. of inputs to controller)
+    real(dp), allocatable :: fullCtrlProps(:,:) !! Matrix of unnecessarily many controller properties
 
     integer :: i, j
 
     !! --- Logic section ---
 
     allocate(y0(numVregIn),uy0(numVregOut),uy1(numVregOut),uy(numVregOut), &
-         &   duTable(numVregOut,nPerturb), STAT=ierr)
+         &   fullCtrlProps(nPerturb,numVregOut), STAT=ierr)
     if (ierr /= 0) then
        ierr = allocationError('EstimateControllerProperties02')
        return
@@ -1210,7 +1196,7 @@ contains
              if (ierr < 0) goto 915
 
              !! Calculate du and store in a table
-             duTable(:,j) =  uy - uy1
+             fullCtrlProps(j,:) = uy - uy1
           end do
 
        case (VEL_p)
@@ -1236,7 +1222,7 @@ contains
              if (ierr < 0) goto 915
 
              !! Calculate du and store in a table
-             duTable(:,j) = uy - uy0
+             fullCtrlProps(j,:) = uy - uy1
           end do
 
        case (ACC_p)
@@ -1263,7 +1249,7 @@ contains
              if (ierr < 0) goto 915
 
              !! Calculate du and store in a table
-             duTable(:,j) = uy - uy0
+             fullCtrlProps(j,:) = uy - uy1
           end do
 
        case default
@@ -1272,15 +1258,10 @@ contains
        end select
 
        !! Calculate controller properties
-       call FindInv (dyMatrix,invDyMatrix,nPerturb,ierr)
+       call solveAxB (dyMatrix,fullCtrlProps,ierr)
        if (ierr < 0) goto 915
 
-       do j = 1, nPerturb
-          ctrlProps(:,j,i) = invDyMatrix(j,1)*duTable(:,1) &
-               &           + invDyMatrix(j,2)*duTable(:,2) &
-               &           + invDyMatrix(j,3)*duTable(:,3) &
-               &           + invDyMatrix(j,4)*duTable(:,4)
-       end do
+       ctrlProps(:,:,i) = transpose(fullCtrlProps)
     end do
 
 900 continue
@@ -1291,7 +1272,7 @@ contains
 
     call deallocateCtrlCopy (ctrlCopy)
     call deallocateCtrlCopy (ctrlCopyCopy)
-    deallocate(y0,uy0,uy1,uy,duTable)
+    deallocate(y0,uy0,uy1,uy,fullCtrlProps)
     return
 
 915 call reportError (debugFileOnly_p,'EstimateControllerProperties02')
@@ -1351,6 +1332,7 @@ contains
     use SystemTypeModule , only : SystemType, dp
     use ControlTypeModule, only : ControlType, copyCtrl
     use SensorTypeModule , only : POS_p, VEL_p, ACC_p
+    use DenseMatrixModule, only : solveAxB
     use ReportErrorModule, only : allocationError, reportError
     use ReportErrorModule, only : debugFileOnly_p
 
@@ -1402,20 +1384,14 @@ contains
     real(dp), allocatable :: uy1(:)              !! u(y1)
     real(dp), allocatable :: uy2(:)              !! u(y2), output from controller when input is y = y0+dy
     real(dp) :: dyMatrix(nPerturb,nPerturb)      !! matrix of perturbation parameters
-    real(dp) :: invDyMatrix(nPerturb,nPerturb)   !! inverse of the dy-matrix
-    real(dp), allocatable :: duTable(:,:)        !! table for storing du = u(y)-u(y0)
-    ! 										     !!(no. of outputs from controller,
-    !										     !! no. of perturbations on controller,
-    ! 										     !! no. of inputs to controller)
-    real(dp), allocatable :: fullCtrlProps(:,:)!! Matrix of unnecessarily many controller properties
+    real(dp), allocatable :: fullCtrlProps(:,:)  !! Matrix of unnecessarily many controller properties
 
     integer :: i, j
 
     !! --- Logic section ---
 
     allocate(y0(numVregIn),uy0(numVregOut),uy1(numVregOut),uy2(numVregOut), &
-         &   duTable(numVregOut,nPerturb), &
-         &   fullCtrlProps(numVregOut,nPerturb), STAT=ierr)
+         &   fullCtrlProps(nPerturb,numVregOut), STAT=ierr)
     if (ierr /= 0) then
        ierr = allocationError('EstimateControllerProperties03')
        return
@@ -1491,38 +1467,29 @@ contains
           if (ierr < 0) goto 915
 
           !! Calculate du and store in a table
-          duTable(:,j) = uy2 - uy1
+          fullCtrlProps(j,:) = uy2 - uy1
        end do
 
        !! Calculate controller properties
-       call FindInv (dyMatrix,invDyMatrix,nPerturb,ierr)
+       call solveAxB (dyMatrix,fullCtrlProps,ierr)
        if (ierr < 0) goto 915
-
-       do j = 1, nPerturb
-          fullCtrlProps(:,j) = invDyMatrix(j,1)*duTable(:,1) &
-            &                   +invDyMatrix(j,2)*duTable(:,2) &
-            &                   +invDyMatrix(j,3)*duTable(:,3) &
-            &                   +invDyMatrix(j,4)*duTable(:,4) &
-            &                   +invDyMatrix(j,5)*duTable(:,5) &
-            &                   +invDyMatrix(j,6)*duTable(:,6)
-       end do
 
        select case (ctrlCopy%input(i)%engine%args(1)%p%entity)
        case (POS_p) ! dintydt, dy, ddydt and dd2ydt2
-          ctrlProps(:,1,i) = fullCtrlProps(:,3)
-          ctrlProps(:,2,i) = fullCtrlProps(:,4)
-          ctrlProps(:,3,i) = fullCtrlProps(:,5)
-          ctrlProps(:,4,i) = fullCtrlProps(:,6)
+          ctrlProps(:,1,i) = fullCtrlProps(3,:)
+          ctrlProps(:,2,i) = fullCtrlProps(4,:)
+          ctrlProps(:,3,i) = fullCtrlProps(5,:)
+          ctrlProps(:,4,i) = fullCtrlProps(6,:)
        case (VEL_p) ! dintintydt, dintydt, dy, ddydt
-          ctrlProps(:,1,i) = fullCtrlProps(:,2)
-          ctrlProps(:,2,i) = fullCtrlProps(:,3)
-          ctrlProps(:,3,i) = fullCtrlProps(:,4)
-          ctrlProps(:,4,i) = fullCtrlProps(:,5)
+          ctrlProps(:,1,i) = fullCtrlProps(2,:)
+          ctrlProps(:,2,i) = fullCtrlProps(3,:)
+          ctrlProps(:,3,i) = fullCtrlProps(4,:)
+          ctrlProps(:,4,i) = fullCtrlProps(5,:)
        case (ACC_p) ! dintintintydt, dintintydt, dintydt, dy
-          ctrlProps(:,1,i) = fullCtrlProps(:,1)
-          ctrlProps(:,2,i) = fullCtrlProps(:,2)
-          ctrlProps(:,3,i) = fullCtrlProps(:,3)
-          ctrlProps(:,4,i) = fullCtrlProps(:,4)
+          ctrlProps(:,1,i) = fullCtrlProps(1,:)
+          ctrlProps(:,2,i) = fullCtrlProps(2,:)
+          ctrlProps(:,3,i) = fullCtrlProps(3,:)
+          ctrlProps(:,4,i) = fullCtrlProps(4,:)
        case default
           !! Error
        end select
@@ -1537,7 +1504,7 @@ contains
 
     call deallocateCtrlCopy (ctrlCopy)
     call deallocateCtrlCopy (ctrlCopyCopy)
-    deallocate(y0,uy0,uy1,uy2,duTable,fullCtrlProps)
+    deallocate(y0,uy0,uy1,uy2,fullCtrlProps)
     return
 
 915 call reportError (debugFileOnly_p,'EstimateControllerProperties03')
@@ -1595,6 +1562,7 @@ contains
     use SystemTypeModule , only : SystemType, dp
     use ControlTypeModule, only : ControlType, copyCtrl
     use SensorTypeModule , only : POS_p, VEL_p, ACC_p
+    use DenseMatrixModule, only : solveAxB
     use ReportErrorModule, only : allocationError, reportError
     use ReportErrorModule, only : debugFileOnly_p
 
@@ -1640,20 +1608,14 @@ contains
     real(dp), allocatable :: uy0(:)              !! u(y0), output from controller when input is y0
     real(dp), allocatable :: uy(:)               !! u(y), output from controller when input is y = y0+dy
     real(dp) :: dyMatrix(nPerturb,nPerturb)      !! matrix of perturbation parameters
-    real(dp) :: invDyMatrix(nPerturb,nPerturb)   !! inverse of the dy-matrix
-    real(dp), allocatable :: duTable(:,:)        !! table for storing du = u(y)-u(y0)
-    ! 										     !!(no. of outputs from controller,
-    !										     !! no. of perturbations on controller,
-    ! 										     !! no. of inputs to controller)
-    real(dp), allocatable :: fullCtrlProps(:,:)!! Matrix of unnecessarily many controller properties
+    real(dp), allocatable :: fullCtrlProps(:,:)  !! Matrix of unnecessarily many controller properties
 
     integer :: i, ii, j
 
     !! --- Logic section ---
 
     allocate(y0(numVregIn),uy0(numVregOut),uy(numVregOut), &
-         &   duTable(numVregOut,nPerturb), &
-         &   fullCtrlProps(numVregOut,nPerturb), STAT=ierr)
+         &   fullCtrlProps(nPerturb,numVregOut), STAT=ierr)
     if (ierr /= 0) then
        ierr = allocationError('EstimateControllerProperties04')
        return
@@ -1725,37 +1687,29 @@ contains
           end do
 
           !! Calculate and store du in a table
-          duTable(:,j) = uy - uy0
+          fullCtrlProps(j,:) = uy - uy0
        end do
 
        !! Calculate controller properties
-       call FindInv (dyMatrix,invDyMatrix,nPerturb,ierr)
+       call solveAxB (dyMatrix,fullCtrlProps,ierr)
        if (ierr < 0) goto 915
-
-       do j = 1, nPerturb
-          fullCtrlProps(:,j) = invDyMatrix(j,1)*duTable(:,1) &
-            &                   +invDyMatrix(j,2)*duTable(:,2) &
-            &                   +invDyMatrix(j,3)*duTable(:,3) &
-            &                   +invDyMatrix(j,4)*duTable(:,4) &
-            &                   +invDyMatrix(j,5)*duTable(:,5)
-       end do
 
        select case (ctrlCopy%input(i)%engine%args(1)%p%entity)
        case (POS_p) ! find dintydt, dy, ddydt
-          ctrlProps(:,1,i) = fullCtrlProps(:,3)
-          ctrlProps(:,2,i) = fullCtrlProps(:,4)
-          ctrlProps(:,3,i) = fullCtrlProps(:,5)
+          ctrlProps(:,1,i) = fullCtrlProps(3,:)
+          ctrlProps(:,2,i) = fullCtrlProps(4,:)
+          ctrlProps(:,3,i) = fullCtrlProps(5,:)
           ctrlProps(:,4,i) = 0.0_dp
        case (VEL_p) ! find dintintydt, dintydt, dy, ddydt
-          ctrlProps(:,1,i) = fullCtrlProps(:,2)
-          ctrlProps(:,2,i) = fullCtrlProps(:,3)
-          ctrlProps(:,3,i) = fullCtrlProps(:,4)
-          ctrlProps(:,4,i) = fullCtrlProps(:,5)
+          ctrlProps(:,1,i) = fullCtrlProps(2,:)
+          ctrlProps(:,2,i) = fullCtrlProps(3,:)
+          ctrlProps(:,3,i) = fullCtrlProps(4,:)
+          ctrlProps(:,4,i) = fullCtrlProps(5,:)
        case (ACC_p) ! find dintintintydt,dintintydt,dintydt, dy
-          ctrlProps(:,1,i) = fullCtrlProps(:,1)
-          ctrlProps(:,2,i) = fullCtrlProps(:,2)
-          ctrlProps(:,3,i) = fullCtrlProps(:,3)
-          ctrlProps(:,4,i) = fullCtrlProps(:,4)
+          ctrlProps(:,1,i) = fullCtrlProps(1,:)
+          ctrlProps(:,2,i) = fullCtrlProps(2,:)
+          ctrlProps(:,3,i) = fullCtrlProps(3,:)
+          ctrlProps(:,4,i) = fullCtrlProps(4,:)
        case default
           !! Error
        end select
@@ -1770,7 +1724,7 @@ contains
 
     call deallocateCtrlCopy (ctrlCopy)
     call deallocateCtrlCopy (ctrlCopyCopy)
-    deallocate(y0,uy0,uy,duTable,fullCtrlProps)
+    deallocate(y0,uy0,uy,fullCtrlProps)
     return
 
 915 call reportError (debugFileOnly_p,'EstimateControllerProperties04')
@@ -1919,37 +1873,6 @@ contains
     goto 900
 
   end subroutine EstimateControllerProperties500
-
-
-  !!============================================================================
-  !> @brief Inverts a square matrix using LAPACK.
-
-  subroutine FindInv (mat,inv,n,ierr)
-
-    use ReportErrorModule, only : getErrorFile
-
-    integer , intent(in)  :: n
-    integer , intent(out) :: ierr
-    real(dp), intent(in)  :: mat(n,n)
-    real(dp), intent(out) :: inv(n,n)
-
-    integer  :: iwork(n), lpu
-    real(dp) :: rwork(n)
-
-    call DCOPY (n*n,mat(1,1),1,inv(1,1),1)
-    call DGETRF (n,n,inv(1,1),n,iwork(1),ierr)
-    if (ierr /= 0) THEN
-       lpu = getErrorFile()
-       write(lpu,"(' *** LAPACK::DGETRF, INFO =',I8)") ierr
-    else
-       call DGETRI (n,inv(1,1),n,iwork(1),rwork(1),n,ierr)
-       if (ierr /= 0) then
-          lpu = getErrorFile()
-          write(lpu,"(' *** LAPACK::DGETRI, INFO =',I8)") ierr
-       end if
-    end if
-
-  end subroutine FindInv
 
 
   !!============================================================================
