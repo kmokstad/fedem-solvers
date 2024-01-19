@@ -133,6 +133,7 @@ contains
     use SensorTypeModule          , only : TRIAD_p, RELATIVE_TRIAD_p
     use SensorTypeModule          , only : JOINT_VARIABLE_p
     use ForceTypeModule           , only : ForceType
+    use ControlTypeModule         , only : getSensor
     use ReportErrorModule         , only : allocationError
 
     type(ControlStructType)   , intent(inout)      :: pCS
@@ -178,39 +179,32 @@ contains
     do i = 1, pCS%numStructCtrlParams
        pS          => pCS%structToControlSensors(i)
        pS%pCtrlPrm => inputs(tmpIdx(i))
+       pS%pSensor  => getSensor(pS%pCtrlPrm)
 
        pS%iCin = 0  !! i.e. not set yet
        pS%whichVreg = pS%pCtrlPrm%var
        iCin_from_AllVreg(pS%whichVreg) = 1 !! flag that this vreg is part of the cIn side
 
-          !!TODO,bh: check this
-          pS%pSensor => pS%pCtrlPrm%engine%args(1)%p
-
-
-       if      (pS%pSensor%type == TRIAD_p) then
+       select case (pS%pSensor%type)
+       case (TRIAD_p)
           pS%pTriad1 => triads(pS%pSensor%index(1))
           nullify(pS%pTriad2)
           nullify(pS%pJoint)
           lNode_from_SAM_node(pS%pTriad1%samNodNum) = 1
 
-       else if (pS%pSensor%type == RELATIVE_TRIAD_p) then
-
+       case (RELATIVE_TRIAD_p)
           pS%pTriad1 => triads(pS%pSensor%index(1))
           pS%pTriad2 => triads(pS%pSensor%index(2))
           nullify(pS%pJoint)
           lNode_from_SAM_node(pS%pTriad1%samNodNum) = 1
           lNode_from_SAM_node(pS%pTriad2%samNodNum) = 1
 
-       else if (pS%pSensor%type == JOINT_VARIABLE_p) then
-
+       case (JOINT_VARIABLE_p)
           nullify(pS%pTriad1)
           nullify(pS%pTriad2)
           pS%pJoint => joints(pS%pSensor%index(1))
           lNode_from_SAM_node(pS%pJoint%samNodNum) = 1
-
-       else
-          !! Error, actually
-       end if
+       end select
 
     end do
 
@@ -415,7 +409,7 @@ contains
   subroutine getCtrlParamsWithStructSensors (ctrlParams, numStructCtrlParams, &
        &                                     ctrlParamsWithStructSensors)
 
-    use ReportErrorModule, only : allocationError
+    use ReportErrorModule, only : allocationError, reportError, warning_p
 
     type(CtrlPrm), target, intent(in)  :: ctrlParams(:)
     integer,               intent(out) :: numStructCtrlParams
@@ -428,7 +422,7 @@ contains
 
     numStructCtrlParams = 0
     do i = 1, size(ctrlParams)
-       if (hasStructSensor(ctrlParams(i))) then
+       if (hasStructSensor(ctrlParams(i),.false.)) then
           numStructCtrlParams = numStructCtrlParams + 1
        end if
     end do
@@ -441,7 +435,7 @@ contains
 
     iPrm = 0
     do i = 1, size(ctrlParams)
-       if (hasStructSensor(ctrlParams(i))) then
+       if (hasStructSensor(ctrlParams(i),.true.)) then
           iPrm = iPrm + 1
           ctrlParamsWithStructSensors(iPrm) = i
        end if
@@ -450,21 +444,25 @@ contains
   contains
 
     !> @brief Checks if a control parameter is coupled to a structural DOF.
-    logical function hasStructSensor (prm)
-      use SensorTypeModule , only : SensorType, TRIAD_P, RELATIVE_TRIAD_p
+    logical function hasStructSensor (prm,notify)
+      use ControlTypeModule, only : getSensor
+      use SensorTypeModule , only : SensorType, sensorType_p
+      use SensorTypeModule , only : TRIAD_P, RELATIVE_TRIAD_p
+      use SensorTypeModule , only : JOINT_VARIABLE_p, TIME_p
       type(CtrlPrm), intent(in) :: prm
-      integer :: iType
-      type(SensorType), pointer :: pSensor => null()
-
-      if (associated(prm%engine)) then
-         !!TODO,bh: check this after the addition of the new argument array
-         pSensor => prm%engine%args(1)%p
-      end if
-
-      if (associated(pSensor)) then
-         iType = pSensor%type
-         hasStructSensor = iType == TRIAD_P .or. iType == RELATIVE_TRIAD_p
-      else
+      logical      , intent(in) :: notify
+      type(SensorType), pointer :: sensor
+      sensor => getSensor(prm)
+      if (associated(sensor)) then
+         hasStructSensor = sensor%type == TRIAD_P .or. &
+              &            sensor%type == RELATIVE_TRIAD_p .or. &
+              &            sensor%type == JOINT_VARIABLE_p
+         if (.not.hasStructSensor .and. sensor%type/=TIME_p .and. notify) then
+            call reportError (warning_p,'Unsupported sensor type '// &
+                 &            trim(sensorType_p(sensor%type))//' (ignored)', &
+                 &            addString='getCtrlParamsWithStructSensors')
+         end if
+      else ! Logic error, should not happen
          hasStructSensor = .false.
       end if
     end function hasStructSensor
@@ -539,7 +537,7 @@ contains
     use EngineRoutinesModule
 
     type(ControlStructType), intent(inout) :: pCS
-    type(ControlType)      , intent(inout) :: ctrl
+    type(ControlType)      , intent(in)    :: ctrl
     type(SystemType)       , intent(inout) :: sys
     integer                , intent(in)    :: msim(:)
     integer                , intent(out)   :: ierr
@@ -761,12 +759,14 @@ contains
     !!==========================================================================
 
     use SystemTypeModule , only : SystemType, dp
-    use ControlTypeModule
+    use ControlTypeModule, only : ControlType, copyCtrl
     use SensorTypeModule , only : POS_p, VEL_p, ACC_p
     use DenseMatrixModule, only : solveAxB
+    use ReportErrorModule, only : allocationError, reportError
+    use ReportErrorModule, only : debugFileOnly_p
 
     type(SystemType)   , intent(inout) :: sys
-    type(ControlType)  , intent(inout) :: ctrl
+    type(ControlType)  , intent(in)    :: ctrl
     integer            , intent(in)    :: msim(:)
     integer,             intent(in)    :: numVregIn         !! Number of vreg in to perturb
     integer,             intent(in)    :: whichVregIn(:)    !! Which vreg in to perturb
@@ -787,8 +787,8 @@ contains
 
     integer, parameter :: nPerturb = 3 !< Number of controller perturbations
 
-    type(ControlType)  , pointer :: ctrlCopy
-    type(ControlType)  , pointer :: ctrlCopyCopy
+    type(ControlType), pointer :: ctrlCopy => null()
+    type(ControlType), pointer :: ctrlCopyCopy => null()
 
     real(dp) :: orgTime                          !! original/initial value for the time
     real(dp) :: orgTimeStep                      !! original/initial value for the time step
@@ -819,12 +819,6 @@ contains
     j = 0   !! j used for nPerturb
     iInput = 0
 
-    !! Make copy of controller
-    call AllocateCopyControlType(ctrl,ctrlCopy,ierr) !! Allocate and copy
-    if ( ierr /= 0 ) return
-    call AllocateCopyControlType(ctrlCopy,ctrlCopyCopy,ierr) !! Allocate and copy
-    if ( ierr /= 0 ) return
-
     !! Reset variables
     t0      = 0.0_dp
     dt      = 0.0_dp
@@ -834,6 +828,10 @@ contains
 
     allocate(y0(numVregIn),uy0(numVregOut),uy(numVregOut), &
          &   duTable(nPerturb,numVregOut), STAT=ierr)
+    if (ierr /= 0) then
+       ierr = allocationError('EstimateControllerProperties01')
+       return
+    end if
 
     !! Store the initial values of the time
     orgTime = sys%time
@@ -848,7 +846,10 @@ contains
        sys%time = t0
        sys%timeStep = dt0
        dy = 0.0_dp
-       call CopyControlType(ctrl,ctrlCopy)
+
+       call copyCtrl (ctrl,ctrlCopy,ierr)
+       if (ierr < 0) goto 915
+
        !! Initial perturbation
        call PerturbController(sys,ctrlCopy,msim,iInput,dt0,dy,numVregOut, &
             &                    whichVregOut,ctrlSysMode,uy0,ierr)
@@ -869,7 +870,9 @@ contains
 
           !! The perturbation sequence
           !! Reset current controller (ctrlCopyCopy) to original state (ctrlCopy)
-          call CopyControlType(ctrlCopy,ctrlCopyCopy)
+          call copyCtrl (ctrlCopy,ctrlCopyCopy,ierr)
+          if (ierr < 0) goto 915
+
           sys%timeStep = dt
           uy  = 0.0_dp
           !! Perturb
@@ -901,16 +904,19 @@ contains
        end select
     end do
 
+900 continue
+
     !! Final reset time
     sys%time = orgTime
     sys%timeStep = orgTimeStep
 
-    call DeallocateControlType(ctrlCopy,ierr)
-    if ( ierr /= 0 ) return
-    call DeallocateControlType(ctrlCopyCopy,ierr)
-    if ( ierr /= 0 ) return
-
+    call deallocateCtrlCopy (ctrlCopy)
+    call deallocateCtrlCopy (ctrlCopyCopy)
     deallocate(y0,uy0,uy,duTable)
+    return
+
+915 call reportError (debugFileOnly_p,'EstimateControllerProperties01')
+    goto 900
 
   end subroutine EstimateControllerProperties01
 
@@ -1059,12 +1065,14 @@ contains
     !!==========================================================================
 
     use SystemTypeModule , only : SystemType, dp
-    use ControlTypeModule
+    use ControlTypeModule, only : ControlType, copyCtrl
     use SensorTypeModule , only : POS_p, VEL_p, ACC_p
     use DenseMatrixModule, only : solveAxB
+    use ReportErrorModule, only : allocationError, reportError
+    use ReportErrorModule, only : debugFileOnly_p
 
     type(SystemType)   , intent(inout) :: sys
-    type(ControlType)  , intent(inout) :: ctrl
+    type(ControlType)  , intent(in)    :: ctrl
     integer            , intent(in)    :: msim(:)
     integer,             intent(in)    :: numVregIn         !! Number of vreg in to perturb
     integer,             intent(in)    :: whichVregIn(:)    !! Which vreg in to perturb
@@ -1085,8 +1093,8 @@ contains
 
     integer, parameter :: nPerturb = 4 !< Number of controller perturbations
 
-    type(ControlType)  , pointer :: ctrlCopy
-    type(ControlType)  , pointer :: ctrlCopyCopy
+    type(ControlType), pointer :: ctrlCopy => null()
+    type(ControlType), pointer :: ctrlCopyCopy => null()
 
     real(dp) :: orgTime                         !! original/initial value for the time
     real(dp) :: orgTimeStep                     !! original/initial value for the time step
@@ -1127,18 +1135,20 @@ contains
     i = 0
     j = 0
 
-    !! Make copy of controller
-    call AllocateCopyControlType(ctrl,ctrlCopy,ierr) !! Allocate and copy
-    if ( ierr /= 0 ) return
-    call AllocateCopyControlType(ctrlCopy,ctrlCopyCopy,ierr) !! Allocate and copy
-    if ( ierr /= 0 ) return
-
     allocate(y0(numVregIn),uy0(numVregOut),uy1(numVregOut),uy(numVregOut), &
          &   duTable(nPerturb,numVregOut), STAT=ierr)
+    if (ierr /= 0) then
+       ierr = allocationError('EstimateControllerProperties02')
+       return
+    end if
 
     !! Store the initial values of the time
     orgTime = sys%time
     orgTimeStep = sys%timeStep
+
+    !! Make copy of the controller
+    call copyCtrl (ctrl,ctrlCopy,ierr)
+    if (ierr < 0) goto 915
 
     !! Do one time perturbation
     dt0 = sys%timeStep*1.0E-1_dp   !! TODO Magne: Change this value?
@@ -1190,7 +1200,9 @@ contains
              !! To derive d(d2y/dt2), the system has to be perturbed three times (two + initial)
              iInput = whichVregIn(i)
              !! Reset current controller (ctrlCopyCopy) to original state (ctrlCopy)
-             call CopyControlType(ctrlCopy,ctrlCopyCopy)
+             call copyCtrl (ctrlCopy,ctrlCopyCopy,ierr)
+             if (ierr < 0) goto 915
+
              !! First perturbation
              call PerturbController(sys,ctrlCopyCopy,msim,iInput,dt(j),dy1(j),numVregOut, &
                   &                    whichVregOut,ctrlSysMode,uy,ierr)
@@ -1228,7 +1240,9 @@ contains
              !! The perturbation sequence
              iInput = whichVregIn(i)
              !! Reset current controller (ctrlCopyCopy) to original state (ctrlCopy)
-             call CopyControlType(ctrlCopy,ctrlCopyCopy)
+             call copyCtrl (ctrlCopy,ctrlCopyCopy,ierr)
+             if (ierr < 0) goto 915
+
              !! Perturb
              call PerturbController(sys,ctrlCopyCopy,msim,iInput,dt(j),dy(j),numVregOut, &
                   &                    whichVregOut,ctrlSysMode,uy,ierr)
@@ -1261,7 +1275,9 @@ contains
              !! The perturbation sequence
              iInput = whichVregIn(i)
              !! Reset current controller (ctrlCopyCopy) to original state (ctrlCopy)
-             call CopyControlType(ctrlCopy,ctrlCopyCopy)
+             call copyCtrl (ctrlCopy,ctrlCopyCopy,ierr)
+             if (ierr < 0) goto 915
+
              !! Perturb
              call PerturbController(sys,ctrlCopyCopy,msim,iInput,dt(j),dy(j),numVregOut, &
                   &                    whichVregOut,ctrlSysMode,uy,ierr)
@@ -1284,16 +1300,19 @@ contains
        ctrlProps(:,:,i) = transpose(duTable)
     end do
 
+900 continue
+
     !! Final reset time
     sys%time = orgTime
     sys%timeStep = orgTimeStep
 
-    call DeallocateControlType(ctrlCopy,ierr)
-    if ( ierr /= 0 ) return
-    call DeallocateControlType(ctrlCopyCopy,ierr)
-    if ( ierr /= 0 ) return
-
+    call deallocateCtrlCopy (ctrlCopy)
+    call deallocateCtrlCopy (ctrlCopyCopy)
     deallocate(y0,uy0,uy1,uy,duTable)
+    return
+
+915 call reportError (debugFileOnly_p,'EstimateControllerProperties02')
+    goto 900
 
   end subroutine EstimateControllerProperties02
 
@@ -1347,12 +1366,14 @@ contains
     !!==========================================================================
 
     use SystemTypeModule , only : SystemType, dp
-    use ControlTypeModule
+    use ControlTypeModule, only : ControlType, copyCtrl
     use SensorTypeModule , only : POS_p, VEL_p, ACC_p
     use DenseMatrixModule, only : solveAxB
+    use ReportErrorModule, only : allocationError, reportError
+    use ReportErrorModule, only : debugFileOnly_p
 
     type(SystemType)   , intent(inout) :: sys
-    type(ControlType)  , intent(inout) :: ctrl
+    type(ControlType)  , intent(in)    :: ctrl
     integer            , intent(in)    :: msim(:)
     integer,             intent(in)    :: numVregIn         !! Number of vreg in to perturb
     integer,             intent(in)    :: whichVregIn(:)    !! Which vreg in to perturb
@@ -1373,8 +1394,8 @@ contains
 
     integer, parameter :: nPerturb = 6 !< Number of controller perturbations
 
-    type(ControlType)  , pointer :: ctrlCopy
-    type(ControlType)  , pointer :: ctrlCopyCopy
+    type(ControlType), pointer :: ctrlCopy => null()
+    type(ControlType), pointer :: ctrlCopyCopy => null()
 
     real(dp) :: orgTime                          !! original/initial value for the time
     real(dp) :: orgTimeStep                      !! original/initial value for the time step
@@ -1414,14 +1435,12 @@ contains
     i = 0
     j = 0
 
-    !! Make copy of controller
-    call AllocateCopyControlType(ctrl,ctrlCopy,ierr) !! Allocate and copy
-    if ( ierr /= 0 ) return
-    call AllocateCopyControlType(ctrlCopy,ctrlCopyCopy,ierr) !! Allocate and copy
-    if ( ierr /= 0 ) return
-
     allocate(y0(numVregIn),uy0(numVregOut),uy1(numVregOut),uy(numVregOut), &
          &   duTable(nPerturb,numVregOut), STAT=ierr)
+    if (ierr /= 0) then
+       ierr = allocationError('EstimateControllerProperties03')
+       return
+    end if
 
     allocate(dt(nPerturb),dy1(nPerturb),dy2(nPerturb),y1(nPerturb),          &
          &   dintydt(nPerturb),dintintydt(nPerturb),dintintintydt(nPerturb), &
@@ -1430,6 +1449,10 @@ contains
     !! Store the initial values of the time
     orgTime = sys%time
     orgTimeStep = sys%timeStep
+
+    !! Make copy of controller
+    call copyCtrl (ctrl,ctrlCopy,ierr)
+    if (ierr < 0) goto 915
 
     !! Do one time perturbation
     dt0 = sys%timeStep*1.0E-1_dp   !! TODO Magne: Change this value?
@@ -1481,7 +1504,9 @@ contains
           !! To derive d(d2y/dt2), the system has to be perturbed three times (two + initial)
           iInput = whichVregIn(i)
           !! Reset current controller (ctrlCopyCopy) to original state (ctrlCopy)
-          call CopyControlType(ctrlCopy,ctrlCopyCopy)
+          call copyCtrl (ctrlCopy,ctrlCopyCopy,ierr)
+          if (ierr < 0) goto 915
+
           !! First perturbation
           call PerturbController(sys,ctrlCopyCopy,msim,iInput,dt(j),dy1(j),numVregOut, &
                &                    whichVregOut,ctrlSysMode,uy,ierr)
@@ -1524,18 +1549,21 @@ contains
 
     end do
 
+900 continue
+
     !! Final reset time
     sys%time = orgTime
     sys%timeStep = orgTimeStep
 
-    call DeallocateControlType(ctrlCopy,ierr)
-    if ( ierr /= 0 ) return
-    call DeallocateControlType(ctrlCopyCopy,ierr)
-    if ( ierr /= 0 ) return
-
+    call deallocateCtrlCopy (ctrlCopy)
+    call deallocateCtrlCopy (ctrlCopyCopy)
     deallocate(uy0,uy1,uy,duTable)
     deallocate(y0,dt,dy1,dy2,y1,dintydt,dintintydt, &
            &   dintintintydt,ddydt,dd2ydt2)
+    return
+
+915 call reportError (debugFileOnly_p,'EstimateControllerProperties03')
+    goto 900
 
   end subroutine EstimateControllerProperties03
 
@@ -1587,12 +1615,14 @@ contains
     !!==========================================================================
 
     use SystemTypeModule , only : SystemType, dp
-    use ControlTypeModule
+    use ControlTypeModule, only : ControlType, copyCtrl
     use SensorTypeModule , only : POS_p, VEL_p, ACC_p
     use DenseMatrixModule, only : solveAxB
+    use ReportErrorModule, only : allocationError, reportError
+    use ReportErrorModule, only : debugFileOnly_p
 
     type(SystemType)   , intent(inout) :: sys
-    type(ControlType)  , intent(inout) :: ctrl
+    type(ControlType)  , intent(in)    :: ctrl
     integer            , intent(in)    :: msim(:)
     integer,             intent(in)    :: numVregIn         !! Number of vreg in to perturb
     integer,             intent(in)    :: whichVregIn(:)    !! Which vreg in to perturb
@@ -1614,8 +1644,8 @@ contains
 
     integer, parameter :: nPerturb = 5 !< Number of controller perturbations
 
-    type(ControlType)  , pointer :: ctrlCopy
-    type(ControlType)  , pointer :: ctrlCopyCopy
+    type(ControlType), pointer :: ctrlCopy => null()
+    type(ControlType), pointer :: ctrlCopyCopy => null()
 
     real(dp) :: orgTime                          !! original/initial value for the time
     real(dp) :: orgTimeStep                      !! original/initial value for the time step
@@ -1651,20 +1681,22 @@ contains
     ii = 0
     j = 0
 
-    !! Make copy of controller
-    call AllocateCopyControlType(ctrl,ctrlCopy,ierr) !! Allocate and copy
-    if ( ierr /= 0 ) return
-    call AllocateCopyControlType(ctrlCopy,ctrlCopyCopy,ierr) !! Allocate and copy
-    if ( ierr /= 0 ) return
-
     allocate(y0(numVregIn),uy0(numVregOut),uy(numVregOut), &
          &   duTable(nPerturb,numVregOut), STAT=ierr)
+    if (ierr /= 0) then
+       ierr = allocationError('EstimateControllerProperties04')
+       return
+    end if
 
     allocate(dt(nPerturb),dy(nPerturb),dintydt(nPerturb),dintintydt(nPerturb),dintintintydt(nPerturb),ddydt(nPerturb))
 
     !! Store the initial values of the time
     orgTime = sys%time
     orgTimeStep = sys%timeStep
+
+    !! Make copy of controller
+    call copyCtrl (ctrl,ctrlCopy,ierr)
+    if (ierr < 0) goto 915
 
     !! Do one initial time perturbation
     dt0 = sys%timeStep*1.0E-1_dp   !! TODO Magne: Change this value?
@@ -1714,7 +1746,9 @@ contains
           !! The perturbation sequence
           iInput = whichVregIn(i)
           !! Reset current controller (ctrlCopyCopy) to original state (ctrlCopy)
-          call CopyControlType(ctrlCopy,ctrlCopyCopy)
+          call copyCtrl (ctrlCopy,ctrlCopyCopy)
+          if (ierr < 0) goto 915
+
           !! First perturbation
           ddt = dt(j)/real(nStep,dp)
           ddy = dy(j)/real(nStep,dp)
@@ -1754,17 +1788,20 @@ contains
 
     end do
 
+900 continue
+
     !! Final reset time
     sys%time = orgTime
     sys%timeStep = orgTimeStep
 
-    call DeallocateControlType(ctrlCopy,ierr)
-    if ( ierr /= 0 ) return
-    call DeallocateControlType(ctrlCopyCopy,ierr)
-    if ( ierr /= 0 ) return
-
+    call deallocateCtrlCopy (ctrlCopy)
+    call deallocateCtrlCopy (ctrlCopyCopy)
     deallocate(uy0,uy,duTable)
     deallocate(y0,dt,dintydt,dintintydt,dintintintydt,ddydt)
+    return
+
+915 call reportError (debugFileOnly_p,'EstimateControllerProperties04')
+    goto 900
 
   end subroutine EstimateControllerProperties04
 
@@ -1784,11 +1821,13 @@ contains
        &                                      ctrlProps, ierr)
 
     use SystemTypeModule , only : SystemType, dp
-    use ControlTypeModule
+    use ControlTypeModule, only : ControlType, copyCtrl
     use SensorTypeModule , only : POS_p, VEL_p, ACC_p
+    use ReportErrorModule, only : allocationError, reportError
+    use ReportErrorModule, only : debugFileOnly_p
 
     type(SystemType) , intent(inout) :: sys
-    type(ControlType), intent(inout) :: ctrl
+    type(ControlType), intent(in)    :: ctrl
     integer          , intent(in)    :: msim(:)
     integer          , intent(in)    :: numVregIn        !! Number of vreg in to perturb
     integer          , intent(in)    :: whichVregIn(:)   !! Which vreg in to perturb
@@ -1799,8 +1838,7 @@ contains
 
     !! Local variables
 
-    type(ControlType), pointer :: ctrlCopy
-    type(ControlType), pointer :: ctrlCopyCopy
+    type(ControlType), pointer :: ctrlCopy => null()
 
     real(dp) :: y0          ! initial values of the controller inputs
     real(dp), allocatable :: uy0(:) ! u(y0), output from controller when input to controller is y0
@@ -1820,13 +1858,11 @@ contains
 
     ctrlProps = 0.0_dp
 
-    !! Make copy of controller
-    call AllocateCopyControlType(ctrl,ctrlCopy,ierr) !! Allocate and copy
-    if ( ierr /= 0 ) return
-    call AllocateCopyControlType(ctrlCopy,ctrlCopyCopy,ierr) !! Allocate and copy
-    if ( ierr /= 0 ) return
-
     allocate(uy0(numVregOut),uy(numVregOut), STAT=ierr)
+    if (ierr /= 0) then
+       ierr = allocationError('EstimateControllerProperties500')
+       return
+    end if
 
     !! Store the initial time values
     orgTime = sys%time
@@ -1837,8 +1873,12 @@ contains
 
     !! Save the value of u(y0) in an array
     do i = 1, numVregOut
-       uy0(i) = ctrlCopy%vreg(whichVregOut(i))
+       uy0(i) = ctrl%vreg(whichVregOut(i))
     end do
+
+    !! Make copy of controller
+    call copyCtrl (ctrl,ctrlCopy,ierr)
+    if (ierr < 0) goto 915
 
     !! Perturbation
     do i = 1, numVregIn
@@ -1851,12 +1891,14 @@ contains
        dintydt = (y0 + dy/2.0_dp)*dt
 
        !! The perturbation sequence
-       !! Reset current controller (ctrlCopyCopy) to original state (ctrlCopy)
-       call CopyControlType(ctrlCopy,ctrlCopyCopy)
+       !! Reset current controller (ctrlCopy) to original state (ctrl)
+       call copyCtrl (ctrl,ctrlCopy,ierr)
+       if (ierr < 0) goto 915
+
        !! Perturb the controller
-       call PerturbController (sys,ctrlCopyCopy,msim,whichVregIn(i),dt,dy, &
+       call PerturbController (sys,ctrlCopy,msim,whichVregIn(i),dt,dy, &
             &                  numVregOut,whichVregOut,ctrlSysMode,uy,ierr)
-       if ( ierr /= 0 ) return
+       if (ierr < 0) goto 915
 
        iEntity = ctrlCopy%input(i)%engine%args(1)%p%entity
        select case (iEntity)
@@ -1868,17 +1910,46 @@ contains
 
     end do
 
+900 continue
+
     !! Final reset time
     sys%time = orgTime
     sys%timeStep = orgTimeStep
 
-    call DeallocateControlType(ctrlCopy,ierr)
-    if ( ierr /= 0 ) return
-    call DeallocateControlType(ctrlCopyCopy,ierr)
-    if ( ierr /= 0 ) return
-
+    call deallocateCtrlCopy (ctrlCopy)
     deallocate(uy0,uy)
+    return
+
+915 call reportError (debugFileOnly_p,'EstimateControllerProperties500')
+    goto 900
 
   end subroutine EstimateControllerProperties500
+
+
+  !!============================================================================
+  !> @brief Deallocates a control system copy.
+  !>
+  !> @param ctrl Pointer to controltypemodule::controltype object to deallocate.
+  !>
+  !> @callergraph
+  !>
+  !> @author Knut Morten Okstad
+  !>
+  !> @date 19 Jan 2024
+
+  subroutine deallocateCtrlCopy (ctrl)
+
+    use ControlTypeModule, only : ControlType, deallocateCtrl
+
+    type(ControlType), pointer :: ctrl
+
+    !! --- Logic section ---
+
+    if (associated(ctrl)) then
+       call deallocateCtrl (ctrl,.false.)
+       deallocate(ctrl)
+    end if
+
+  end subroutine deallocateCtrlCopy
 
 end module ControlStructModule
