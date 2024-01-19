@@ -550,7 +550,7 @@ contains
     type(SamType)          , intent(in)    :: sam
 
     integer  :: i, ii, iForce, iS, ierr
-    integer  :: iNode, iCin, iCout, iStart, iEnd, nPerturb, nStep
+    integer  :: iNode, iCin, iCout, iStart, iEnd, nStep
     real(dp), allocatable :: dScr(:,:)        !! Scratch for matrix multiply
 
 
@@ -606,25 +606,22 @@ contains
 
     select case (pCS%ctrlSysEigFlag)
     case (1) ! nPertub = 3: P, I and D gains
-       nPerturb = 3
        call EstimateControllerProperties01 (sys, ctrl, sam%mpar, &
             &                               pCS%numVregIn, pCS%whichVregIn, &
             &                               pCS%numVregOut, pCS%whichVregOut, &
-            &                               nPerturb, pCS%ctrlProps, ierr)
+            &                               pCS%ctrlProps, ierr)
 
     case (2) ! nPerturb = 4
-       nPerturb = 4
        call EstimateControllerProperties02 (sys, ctrl, sam%mpar, &
             &                               pCS%numVregIn, pCS%whichVregIn, &
             &                               pCS%numVregOut, pCS%whichVregOut, &
-            &                               nPerturb, pCS%ctrlProps, ierr)
+            &                               pCS%ctrlProps, ierr)
 
     case (3) ! nPerturb = 6
-       nPerturb = 6
        call EstimateControllerProperties03 (sys, ctrl, sam%mpar, &
             &                               pCS%numVregIn, pCS%whichVregIn, &
             &                               pCS%numVregOut, pCS%whichVregOut, &
-            &                               nPerturb, pCS%ctrlProps, ierr)
+            &                               pCS%ctrlProps, ierr)
 
     case (4:8) ! nPerturb = 5
        nStep = pCS%ctrlSysEigFlag-3 ! nStep = 1...5
@@ -655,11 +652,10 @@ contains
             &                               nStep, pCS%ctrlProps, ierr)
 
     case (500) ! nPerturb = 1
-       nPerturb = 1
        call EstimateControllerProperties500 (sys, ctrl, sam%mpar, &
             &                                pCS%numVregIn, pCS%whichVregIn, &
             &                                pCS%numVregOut, pCS%whichVregOut, &
-            &                                nPerturb, pCS%ctrlProps, ierr)
+            &                                pCS%ctrlProps, ierr)
 
     case default ! Error
     end select
@@ -739,9 +735,9 @@ contains
 
 
   subroutine EstimateControllerProperties01 (sys, ctrl, msim, &
-    &                                   numVregIn, whichVregIn,   &
-    &                                   numVregOut, whichVregOut, &
-    &                                   nPerturb, ctrlProps, ierr)
+       &                                     numVregIn, whichVregIn,   &
+       &                                     numVregOut, whichVregOut, &
+       &                                     ctrlProps, ierr)
 
     !!==========================================================================
     !! Purpose:
@@ -798,7 +794,6 @@ contains
     integer,             intent(in)    :: whichVregIn(:)    !! Which vreg in to perturb
     integer,             intent(in)    :: numVregOut        !! Number of vreg out to read variation from
     integer,             intent(in)    :: whichVregOut(:)   !! Which vreg out to read variation from
-    integer,             intent(in)    :: nPerturb          !! number of perturbations on controller
     real(dp),            intent(out)   :: ctrlProps(:,:,:)  !! table for storing controller properties
     !						  		                        !!(no. of outputs from controller,
     !				 				                        !! no. of controller properties,
@@ -812,6 +807,8 @@ contains
 
     ! Local variables
 
+    integer, parameter :: nPerturb = 3 !< Number of controller perturbations
+
     type(ControlType), pointer :: ctrlCopy, ctrlCopyCopy
 
     real(dp) :: orgTime                          !! original/initial value for the time
@@ -823,9 +820,9 @@ contains
     real(dp), allocatable :: y0(:)               !! initial values of the controller inputs
     real(dp), allocatable :: uy0(:)              !! u(y0), output from controller when input is y0
     real(dp), allocatable :: uy(:)               !! u(y), output from controller when input is y = y0+dy
-    real(dp), allocatable :: dyMatrix(:,:)     !! matrix of perturbation parameters
-    real(dp), allocatable :: invDyMatrix(:,:)  !! inverse of the dy-matrix
-    real(dp), allocatable :: duTable(:,:)      !! table for storing du = u(y)-u(y0)
+    real(dp) :: dyMatrix(nPerturb,nPerturb)      !! matrix of perturbation parameters
+    real(dp) :: invDyMatrix(nPerturb,nPerturb)   !! inverse of the dy-matrix
+    real(dp), allocatable :: duTable(:,:)        !! table for storing du = u(y)-u(y0)
     ! 										     !!(no. of outputs from controller,
     !										     !! no. of perturbations on controller,
     ! 										     !! no. of inputs to controller)
@@ -837,9 +834,7 @@ contains
 
     allocate(y0(numVregIn),uy0(numVregOut),uy(numVregOut), &
          &   duTable(numVregOut,nPerturb), &
-         &   fullCtrlProps(numVregOut,nPerturb), &
-         &   dyMatrix(nPerturb,nPerturb), &
-         &   invDyMatrix(nPerturb,nPerturb), STAT=ierr)
+         &   fullCtrlProps(numVregOut,nPerturb), STAT=ierr)
     if (ierr /= 0) then
        ierr = allocationError('EstimateControllerProperties01')
        return
@@ -929,8 +924,7 @@ contains
 
     call deallocateCtrlCopy (ctrlCopy)
     call deallocateCtrlCopy (ctrlCopyCopy)
-    deallocate(duTable,fullCtrlProps,dyMatrix,invDyMatrix)
-    deallocate(y0,uy0,uy)
+    deallocate(y0,uy0,uy,duTable,fullCtrlProps)
     return
 
 915 call reportError (debugFileOnly_p,'EstimateControllerProperties01')
@@ -1034,9 +1028,9 @@ contains
 
 
   subroutine EstimateControllerProperties02 (sys, ctrl, msim, &
-    &                                   numVregIn, whichVregIn,   &
-    &                                   numVregOut, whichVregOut, &
-    &                                   nPerturb, ctrlProps, ierr)
+       &                                     numVregIn, whichVregIn,   &
+       &                                     numVregOut, whichVregOut, &
+       &                                     ctrlProps, ierr)
 
     !!==========================================================================
     !! Purpose:
@@ -1092,7 +1086,6 @@ contains
     integer,             intent(in)    :: whichVregIn(:)    !! Which vreg in to perturb
     integer,             intent(in)    :: numVregOut        !! Number of vreg out to read variation from
     integer,             intent(in)    :: whichVregOut(:)   !! Which vreg out to read variation from
-    integer,             intent(in)    :: nPerturb          !! number of perturbations on controller
     real(dp),            intent(out)   :: ctrlProps(:,:,:)  !! table for storing controller properties
     !						  		                        !!(no. of outputs from controller,
     !				 				                        !! no. of controller properties,
@@ -1105,6 +1098,8 @@ contains
     integer            , intent(inout) :: ierr
 
     ! Local variables
+
+    integer, parameter :: nPerturb = 4 !< Number of controller perturbations
 
     type(ControlType), pointer :: ctrlCopy, ctrlCopyCopy
 
@@ -1128,9 +1123,9 @@ contains
     real(dp), allocatable :: uy0(:)             !! u(y0), output from controller when input is y0
     real(dp), allocatable :: uy1(:)             !! u(y1)
     real(dp), allocatable :: uy(:)              !! u(y), output from controller when input is y = y0+dy
-    real(dp), allocatable :: dyMatrix(:,:)    !! matrix of perturbation parameters
-    real(dp), allocatable :: invDyMatrix(:,:) !! inverse of the dy-matrix
-    real(dp), allocatable :: duTable(:,:)     !! table for storing du = u(y)-u(y0)
+    real(dp) :: dyMatrix(nPerturb,nPerturb)     !! matrix of perturbation parameters
+    real(dp) :: invDyMatrix(nPerturb,nPerturb)  !! inverse of the dy-matrix
+    real(dp), allocatable :: duTable(:,:)       !! table for storing du = u(y)-u(y0)
     ! 										    !!(no. of outputs from controller,
     !										    !! no. of perturbations on controller,
     ! 										    !! no. of inputs to controller)
@@ -1140,9 +1135,7 @@ contains
     !! --- Logic section ---
 
     allocate(y0(numVregIn),uy0(numVregOut),uy1(numVregOut),uy(numVregOut), &
-         &   duTable(numVregOut,nPerturb), &
-         &   dyMatrix(nPerturb,nPerturb), &
-         &   invDyMatrix(nPerturb,nPerturb), STAT=ierr)
+         &   duTable(numVregOut,nPerturb), STAT=ierr)
     if (ierr /= 0) then
        ierr = allocationError('EstimateControllerProperties02')
        return
@@ -1298,8 +1291,7 @@ contains
 
     call deallocateCtrlCopy (ctrlCopy)
     call deallocateCtrlCopy (ctrlCopyCopy)
-    deallocate(duTable,dyMatrix,invDyMatrix)
-    deallocate(y0,uy0,uy1,uy)
+    deallocate(y0,uy0,uy1,uy,duTable)
     return
 
 915 call reportError (debugFileOnly_p,'EstimateControllerProperties02')
@@ -1309,9 +1301,9 @@ contains
 
 
   subroutine EstimateControllerProperties03 (sys, ctrl, msim, &
-    &                                   numVregIn, whichVregIn,   &
-    &                                   numVregOut, whichVregOut, &
-    &                                   nPerturb, ctrlProps, ierr)
+       &                                     numVregIn, whichVregIn, &
+       &                                     numVregOut, whichVregOut, &
+       &                                     ctrlProps, ierr)
 
     !!==========================================================================
     !! Purpose:
@@ -1371,7 +1363,6 @@ contains
     integer,             intent(in)    :: whichVregIn(:)    !! Which vreg in to perturb
     integer,             intent(in)    :: numVregOut        !! Number of vreg out to read variation from
     integer,             intent(in)    :: whichVregOut(:)   !! Which vreg out to read variation from
-    integer,             intent(in)    :: nPerturb          !! number of perturbations on controller
     real(dp),            intent(out)   :: ctrlProps(:,:,:)  !! table for storing controller properties
     !						  		                        !!(no. of outputs from controller,
     !				 				                        !! no. of controller properties,
@@ -1384,6 +1375,8 @@ contains
     integer            , intent(inout) :: ierr
 
     ! Local variables
+
+    integer, parameter :: nPerturb = 6 !< Number of controller perturbations
 
     type(ControlType), pointer :: ctrlCopy, ctrlCopyCopy
 
@@ -1408,9 +1401,9 @@ contains
     real(dp), allocatable :: uy0(:)              !! u(y0), output from controller when input is y0
     real(dp), allocatable :: uy1(:)              !! u(y1)
     real(dp), allocatable :: uy2(:)              !! u(y2), output from controller when input is y = y0+dy
-    real(dp), allocatable :: dyMatrix(:,:)     !! matrix of perturbation parameters
-    real(dp), allocatable :: invDyMatrix(:,:)  !! inverse of the dy-matrix
-    real(dp), allocatable :: duTable(:,:)      !! table for storing du = u(y)-u(y0)
+    real(dp) :: dyMatrix(nPerturb,nPerturb)      !! matrix of perturbation parameters
+    real(dp) :: invDyMatrix(nPerturb,nPerturb)   !! inverse of the dy-matrix
+    real(dp), allocatable :: duTable(:,:)        !! table for storing du = u(y)-u(y0)
     ! 										     !!(no. of outputs from controller,
     !										     !! no. of perturbations on controller,
     ! 										     !! no. of inputs to controller)
@@ -1422,9 +1415,7 @@ contains
 
     allocate(y0(numVregIn),uy0(numVregOut),uy1(numVregOut),uy2(numVregOut), &
          &   duTable(numVregOut,nPerturb), &
-         &   fullCtrlProps(numVregOut,nPerturb), &
-         &   dyMatrix(nPerturb,nPerturb), &
-         &   invDyMatrix(nPerturb,nPerturb), STAT=ierr)
+         &   fullCtrlProps(numVregOut,nPerturb), STAT=ierr)
     if (ierr /= 0) then
        ierr = allocationError('EstimateControllerProperties03')
        return
@@ -1546,8 +1537,7 @@ contains
 
     call deallocateCtrlCopy (ctrlCopy)
     call deallocateCtrlCopy (ctrlCopyCopy)
-    deallocate(duTable,fullCtrlProps,dyMatrix,invDyMatrix)
-    deallocate(y0,uy0,uy1,uy2)
+    deallocate(y0,uy0,uy1,uy2,duTable,fullCtrlProps)
     return
 
 915 call reportError (debugFileOnly_p,'EstimateControllerProperties03')
@@ -1649,9 +1639,9 @@ contains
     real(dp), allocatable :: y0(:)               !! initial values of the controller inputs
     real(dp), allocatable :: uy0(:)              !! u(y0), output from controller when input is y0
     real(dp), allocatable :: uy(:)               !! u(y), output from controller when input is y = y0+dy
-    real(dp), allocatable :: dyMatrix(:,:)     !! matrix of perturbation parameters
-    real(dp), allocatable :: invDyMatrix(:,:)  !! inverse of the dy-matrix
-    real(dp), allocatable :: duTable(:,:)      !! table for storing du = u(y)-u(y0)
+    real(dp) :: dyMatrix(nPerturb,nPerturb)      !! matrix of perturbation parameters
+    real(dp) :: invDyMatrix(nPerturb,nPerturb)   !! inverse of the dy-matrix
+    real(dp), allocatable :: duTable(:,:)        !! table for storing du = u(y)-u(y0)
     ! 										     !!(no. of outputs from controller,
     !										     !! no. of perturbations on controller,
     ! 										     !! no. of inputs to controller)
@@ -1663,9 +1653,7 @@ contains
 
     allocate(y0(numVregIn),uy0(numVregOut),uy(numVregOut), &
          &   duTable(numVregOut,nPerturb), &
-         &   fullCtrlProps(numVregOut,nPerturb), &
-         &   dyMatrix(nPerturb,nPerturb), &
-         &   invDyMatrix(nPerturb,nPerturb), STAT=ierr)
+         &   fullCtrlProps(numVregOut,nPerturb), STAT=ierr)
     if (ierr /= 0) then
        ierr = allocationError('EstimateControllerProperties04')
        return
@@ -1782,8 +1770,7 @@ contains
 
     call deallocateCtrlCopy (ctrlCopy)
     call deallocateCtrlCopy (ctrlCopyCopy)
-    deallocate(duTable,fullCtrlProps,dyMatrix,invDyMatrix)
-    deallocate(y0,uy0,uy)
+    deallocate(y0,uy0,uy,duTable,fullCtrlProps)
     return
 
 915 call reportError (debugFileOnly_p,'EstimateControllerProperties04')
@@ -1792,18 +1779,19 @@ contains
   end subroutine EstimateControllerProperties04
 
 
-  subroutine EstimateControllerProperties500 (sys, ctrl, msim, &
-    &                                   numVregIn, whichVregIn,   &
-    &                                   numVregOut, whichVregOut, &
-    &                                   nPerturb, ctrlProps, ierr)
+  !!============================================================================
+  !> @brief Perturbation method without initial perturbation.
+  !> @details Perturbation w.r.t. a single integral.
+  !> @a nPerturb = 1 in this subroutine, therefore no loop necessary.
+  !>
+  !> @author Magne Bratland
+  !>
+  !> @date 7 July 2010
 
-    !!==========================================================================
-    !! Purpose:
-    !! Perturbation method without initial perturbation and only w.r.t. single integral
-    !!
-    !! Programmer : Magne Bratland
-    !! date/rev   : 07 July 2010 / 1.0
-    !!==========================================================================
+  subroutine EstimateControllerProperties500 (sys, ctrl, msim, &
+       &                                      numVregIn, whichVregIn, &
+       &                                      numVregOut, whichVregOut, &
+       &                                      ctrlProps, ierr)
 
     use SystemTypeModule , only : SystemType, dp
     use ControlTypeModule, only : ControlType, copyCtrl
@@ -1820,7 +1808,6 @@ contains
     integer,             intent(in)    :: whichVregIn(:)    !! Which vreg in to perturb
     integer,             intent(in)    :: numVregOut        !! Number of vreg out to read variation from
     integer,             intent(in)    :: whichVregOut(:)   !! Which vreg out to read variation from
-    integer,             intent(in)    :: nPerturb          !! number of perturbations on controller
     real(dp),            intent(out)   :: ctrlProps(:,:,:)  !! table for storing controller properties
     !						  		                        !!(no. of outputs from controller,
     !				 				                        !! no. of controller properties,
@@ -1842,26 +1829,16 @@ contains
     real(dp) :: dy0                              !! quazi-initial input perturbation, dy0 = 0
     real(dp) :: dt               !! incremental time step
     real(dp) :: dy               !! incremental controller input step
+    real(dp) :: dyMatrix         !! matrix of perturbation parameters (here just a 1x1 matrix)
     real(dp), allocatable :: y0(:)               !! initial values of the controller inputs
     real(dp), allocatable :: uy0(:)              !! u(y0), output from controller when input is y0
     real(dp), allocatable :: uy(:)               !! u(y), output from controller when input is y = y0+dy
-    real(dp), allocatable :: dyMatrix(:,:)     !! matrix of perturbation parameters
-    real(dp), allocatable :: invDyMatrix(:,:)  !! inverse of the dy-matrix
-    real(dp), allocatable :: duTable(:,:)      !! table for storing du = u(y)-u(y0)
-    ! 										     !!(no. of outputs from controller,
-    !										     !! no. of perturbations on controller,
-    ! 										     !! no. of inputs to controller)
-    real(dp), allocatable :: fullCtrlProps(:,:)!! Matrix of unnecessarily many controller properties
 
-    integer :: i, j
+    integer :: i
 
     !! --- Logic section ---
 
-    allocate(y0(numVregIn),uy0(numVregOut),uy(numVregOut), &
-         &   duTable(numVregOut,nPerturb), &
-         &   fullCtrlProps(numVregOut,nPerturb), &
-         &   dyMatrix(nPerturb,nPerturb), &
-         &   invDyMatrix(nPerturb,nPerturb), STAT=ierr)
+    allocate(y0(numVregIn),uy0(numVregOut),uy(numVregOut),STAT=ierr)
     if (ierr /= 0) then
        ierr = allocationError('EstimateControllerProperties500')
        return
@@ -1888,49 +1865,39 @@ contains
 
     !! Perturbation
     do i = 1, numVregIn
-       do j = 1, nPerturb
-          !! Establish dy-matrix
-          dt = orgTimeStep*real(j,dp)
-          dy = dt
+       !! Establish dy-matrix
+       dt = orgTimeStep
+       dy = dt
 
-          dyMatrix(j,1) = (y0(i)+dy/2.0_dp)*dt
+       dyMatrix = (y0(i)+dy/2.0_dp)*dt
 
-          !! Reset current controller (ctrlCopy) to original state (ctrl)
-          call copyCtrl (ctrl,ctrlCopy,ierr)
-          if (ierr < 0) goto 915
-
-          !! Perturb
-          call PerturbController (sys,ctrlCopy,msim,whichVregIn(i),dt,dy, &
-               &                  numVregOut,whichVregOut,uy,ierr)
-          if (ierr < 0) goto 915
-
-          !! Calculate and store du in a table
-          duTable(:,j) = uy - uy0
-       end do
-
-       !! Calculate controller properties
-       call FindInv (dyMatrix,invDyMatrix,nPerturb,ierr)
+       !! Reset current controller (ctrlCopy) to original state (ctrl)
+       call copyCtrl (ctrl,ctrlCopy,ierr)
        if (ierr < 0) goto 915
 
-       do j = 1, nPerturb
-          fullCtrlProps(:,j) = invDyMatrix(j,1)*duTable(:,1)
-       end do
+       !! Perturb
+       call PerturbController (sys,ctrlCopy,msim,whichVregIn(i),dt,dy, &
+            &                  numVregOut,whichVregOut,uy,ierr)
+       if (ierr < 0) goto 915
+
+       !! Calculate controller properties
+       uy = (1.0_dp/dyMatrix) * (uy - uy0)
 
        select case (ctrl%input(i)%engine%args(1)%p%entity)
        case (POS_p) ! find dintydt, dy, ddydt
-          ctrlProps(:,1,i) = fullCtrlProps(:,1)
+          ctrlProps(:,1,i) = uy
           ctrlProps(:,2,i) = 0.0_dp
           ctrlProps(:,3,i) = 0.0_dp
           ctrlProps(:,4,i) = 0.0_dp
        case (VEL_p) ! find dintydt, dy, ddydt
           ctrlProps(:,1,i) = 0.0_dp
-          ctrlProps(:,2,i) = fullCtrlProps(:,1)
+          ctrlProps(:,2,i) = uy
           ctrlProps(:,3,i) = 0.0_dp
           ctrlProps(:,4,i) = 0.0_dp
        case (ACC_p) ! find dintydt, dy
           ctrlProps(:,1,i) = 0.0_dp
           ctrlProps(:,2,i) = 0.0_dp
-          ctrlProps(:,3,i) = fullCtrlProps(:,1)
+          ctrlProps(:,3,i) = uy
           ctrlProps(:,4,i) = 0.0_dp
        case default
           !! Error
@@ -1945,7 +1912,6 @@ contains
     sys%timeStep = orgTimeStep
 
     call deallocateCtrlCopy (ctrlCopy)
-    deallocate(duTable,fullCtrlProps,dyMatrix,invDyMatrix)
     deallocate(y0,uy0,uy)
     return
 
