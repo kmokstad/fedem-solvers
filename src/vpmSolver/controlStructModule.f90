@@ -41,9 +41,6 @@ module ControlStructModule
      type(TriadType),   pointer :: pTriad2         !! non null if relative sensor on triads
      type(MasterSlaveJointType), pointer :: pJoint !! non null if sensor on a joint dof
 
-     real(dp)                   :: sensorGrad_wrt_disp(12)!! 12 should be enough space
-     !TODO, Missing which cIn this is connected to
-
      !! ?? How to handle pos, vel, or accel ???
   end type StructSensorGradType
 
@@ -57,8 +54,6 @@ module ControlStructModule
      integer                  :: dofStart        !! Local dof start for this node
      integer                  :: nDofs           !! number of dofs for this node
      type(ForceType), pointer :: pForce          !! pointer to force with control out as input
-     real(dp)                 :: forceGrad_wrt_cOut(6) !! Always dim 6
-     !TODO: missing which cOut this is connected to
   end type ForceControlGradType
 
   type ControlStructType
@@ -530,29 +525,31 @@ contains
   end subroutine getCtrlOutForces
 
 
-  subroutine BuildStructControlJacobi (pCS,ctrl,sys,sam)
-    !!===========================================================================
-    !!  Compute the gradient matrix of forces w.r.t. controller inputs
-    !!===========================================================================
+  !!============================================================================
+  !> @brief Computes the gradient matrices of forces w.r.t. controller inputs.
 
-    use ControlTypeModule  , only : ControlType
+  subroutine BuildStructControlJacobi (pCS,ctrl,sys,msim,ierr)
 
-    use ForceRoutinesModule
-    use EngineRoutinesModule
-    use SystemTypeModule
-    use SamModule
+    use ControlTypeModule   , only : ControlType
+    use SystemTypeModule    , only : SystemType
+    use ForceRoutinesModule , only : calcExtTriadForceGradient
+    use EngineRoutinesModule, only : SensorGradient
+    use ReportErrorModule   , only : reportError, debugFileOnly_p
 
     implicit none
 
     type(ControlStructType), intent(inout) :: pCS
     type(ControlType)      , intent(inout) :: ctrl
     type(SystemType)       , intent(inout) :: sys
-    type(SamType)          , intent(in)    :: sam
+    integer                , intent(in)    :: msim(:)
+    integer                , intent(out)   :: ierr
 
-    integer  :: i, ii, iForce, iS, ierr
-    integer  :: iNode, iCin, iCout, iStart, iEnd, nStep
+    !! Local variables
+    integer  :: i, iNode, iCin, iCout, iStart, nStep
+    real(dp) :: sGrad(12), fGrad(6)
     real(dp), allocatable :: dScr(:,:)        !! Scratch for matrix multiply
 
+    !! --- Logic section ---
 
     ierr = 0
 
@@ -560,43 +557,34 @@ contains
 
     pCS%Grad_ForceWrtCout = 0.0_dp
 
-    do iForce = 1, size(pCS%controlForces)
-       call calcExtTriadForceGradient(pCS%controlForces(iForce)%pForce, &
-            &                         pCS%controlForces(iForce)%forceGrad_wrt_cOut, ierr)
+    do i = 1, size(pCS%controlForces)
+       call calcExtTriadForceGradient (pCS%controlForces(i)%pForce, fGrad, ierr)
+       if (ierr < 0) goto 915
 
-            !! Insert into Grad_ForceWrtCout
-            iStart = pCS%controlForces(iForce)%dofStart
-            iEnd   = iStart + pCS%controlForces(iForce)%nDofs - 1
-            iCout  = pCS%controlForces(iForce)%iCout
-            ii = 0
-            do i = iStart, iEnd
-               ii = ii + 1
-               pCS%Grad_ForceWrtCout(i,iCout) = pCS%Grad_ForceWrtCout(i,iCout) &
-               &                              + pCS%controlForces(iForce)%forceGrad_wrt_cOut(ii)
-            end do
+       !! Insert into Grad_ForceWrtCout
+       iStart = pCS%controlForces(i)%dofStart
+       iCout  = pCS%controlForces(i)%iCout
+       call DAXPY (pCS%controlForces(i)%nDofs, 1.0_dp, &
+            &      fGrad(1), 1, pCS%Grad_ForceWrtCout(iStart,iCout), 1)
     end do
 
     !! Compute the control input gradients w.r.t displacement dofs
 
     pCS%Grad_CinWrtSensor = 0.0_dp
 
-    do iS = 1, size(pCS%structToControlSensors)
-       call SensorGradient (pCS%structToControlSensors(iS)%pCtrlPrm, &
-            &               pCS%structToControlSensors(iS)%sensorGrad_wrt_disp, ierr)
+    do i = 1, size(pCS%structToControlSensors)
+       call SensorGradient (pCS%structToControlSensors(i)%pCtrlPrm, sGrad, ierr)
+       if (ierr < 0) goto 915
 
-       do iNode = 1,2
-          if ( pCS%structToControlSensors(iS)%lNode(iNode) <= 0 ) cycle
-
-          !! Insert into Grad_CinWrtSensor
-          iStart = pCS%structToControlSensors(iS)%dofStart(iNode)
-          iEnd   = iStart + pCS%structToControlSensors(iS)%nDofs(iNode) - 1
-          iCin   = pCS%structToControlSensors(iS)%iCin
-          ii = (iNode-1)*6
-          do i = iStart, iEnd
-             ii = ii + 1
-             pCS%Grad_CinWrtSensor(iCin,i) = pCS%Grad_CinWrtSensor(iCin,i) &  !!TODO,bh: Looka at the += form here
-             &                             + pCS%structToControlSensors(iS)%sensorGrad_wrt_disp(ii)
-          end do
+       do iNode = 1, 2
+          if (pCS%structToControlSensors(i)%lNode(iNode) > 0) then
+             !! Insert into Grad_CinWrtSensor
+             iStart = pCS%structToControlSensors(i)%dofStart(iNode)
+             iCin   = pCS%structToControlSensors(i)%iCin
+             call DAXPY (pCS%structToControlSensors(i)%nDofs(iNode), 1.0_dp, &
+                  &      sGrad(iNode*6-5), 1, &
+                  &      pCS%Grad_CinWrtSensor(iCin,iStart), pCS%numVregIn)
+          end if
        end do
     end do
 
@@ -606,59 +594,65 @@ contains
 
     select case (pCS%ctrlSysEigFlag)
     case (1) ! nPertub = 3: P, I and D gains
-       call EstimateControllerProperties01 (sys, ctrl, sam%mpar, &
+       call EstimateControllerProperties01 (sys, ctrl, msim, &
             &                               pCS%numVregIn, pCS%whichVregIn, &
             &                               pCS%numVregOut, pCS%whichVregOut, &
             &                               pCS%ctrlProps, ierr)
 
     case (2) ! nPerturb = 4
-       call EstimateControllerProperties02 (sys, ctrl, sam%mpar, &
+       call EstimateControllerProperties02 (sys, ctrl, msim, &
             &                               pCS%numVregIn, pCS%whichVregIn, &
             &                               pCS%numVregOut, pCS%whichVregOut, &
             &                               pCS%ctrlProps, ierr)
 
     case (3) ! nPerturb = 6
-       call EstimateControllerProperties03 (sys, ctrl, sam%mpar, &
+       call EstimateControllerProperties03 (sys, ctrl, msim, &
             &                               pCS%numVregIn, pCS%whichVregIn, &
             &                               pCS%numVregOut, pCS%whichVregOut, &
             &                               pCS%ctrlProps, ierr)
 
     case (4:8) ! nPerturb = 5
        nStep = pCS%ctrlSysEigFlag-3 ! nStep = 1...5
-       call EstimateControllerProperties04 (sys, ctrl, sam%mpar, &
+       call EstimateControllerProperties04 (sys, ctrl, msim, &
             &                               pCS%numVregIn, pCS%whichVregIn, &
             &                               pCS%numVregOut, pCS%whichVregOut, &
             &                               nStep, pCS%ctrlProps, ierr)
 
     case (9) ! nPerturb = 5
        nStep = 10
-       call EstimateControllerProperties04 (sys, ctrl, sam%mpar, &
+       call EstimateControllerProperties04 (sys, ctrl, msim, &
             &                               pCS%numVregIn, pCS%whichVregIn, &
             &                               pCS%numVregOut, pCS%whichVregOut, &
             &                               nStep, pCS%ctrlProps, ierr)
 
     case (10) ! nPerturb = 5
        nStep = 100
-       call EstimateControllerProperties04 (sys, ctrl, sam%mpar ,&
+       call EstimateControllerProperties04 (sys, ctrl, msim ,&
             &                               pCS%numVregIn, pCS%whichVregIn, &
             &                               pCS%numVregOut, pCS%whichVregOut, &
             &                               nStep, pCS%ctrlProps, ierr)
 
     case (11) ! nPerturb = 5
        nStep = 1000
-       call EstimateControllerProperties04 (sys, ctrl, sam%mpar, &
+       call EstimateControllerProperties04 (sys, ctrl, msim, &
             &                               pCS%numVregIn, pCS%whichVregIn, &
             &                               pCS%numVregOut, pCS%whichVregOut, &
             &                               nStep, pCS%ctrlProps, ierr)
 
     case (500) ! nPerturb = 1
-       call EstimateControllerProperties500 (sys, ctrl, sam%mpar, &
+       call EstimateControllerProperties500 (sys, ctrl, msim, &
             &                                pCS%numVregIn, pCS%whichVregIn, &
             &                                pCS%numVregOut, pCS%whichVregOut, &
             &                                pCS%ctrlProps, ierr)
 
     case default ! Error
+       if (pCS%ctrlSysEigFlag > 0) then
+          ierr = -pCS%ctrlSysEigFlag
+       else
+          ierr = -999
+       end if
     end select
+    if (ierr < 0) goto 915
 
 
     allocate(dScr(pCS%nDofs,pCS%numVregIn))
@@ -713,6 +707,10 @@ contains
 !    end do
 
     deallocate(dScr)
+
+    return
+
+915 call reportError (debugFileOnly_p,'BuildStructControlJacobi')
 
   contains
 
@@ -920,100 +918,6 @@ contains
     goto 900
 
   end subroutine EstimateControllerProperties01
-
-
-  subroutine PerturbController (sys,ctrl,msim,iPerturb,dt,dy, &
-       &                        numVregOut,whichVregOut,uy,ierr)
-
-    !!==========================================================================
-    !! Purpose:
-    !! Perturb one of the inputs of the controller and get the
-    !! reaction for all of the outputs of the controllers.
-    !!
-    !! Working order:
-    !! 1) Change the input y for the controller from y0 to y = y0+dy,
-    !!    where du is a small number. Change the time from t0 to t = t0+dt,
-    !!    where dt is a small number.
-    !! 2) Run this new input through the controller to get the reaction
-    !!    (output) u(y) from the controller due to the change in the input.
-    !!
-    !! Programmer : Magne Bratland
-    !! date/rev   : 18 Sept 2009 / 1.0
-    !!==========================================================================
-
-    use SystemTypeModule     , only : SystemType, dp
-    use ControlTypeModule    , only : ControlType
-    use ControlRoutinesModule, only : IterateControlSystem
-
-    implicit none
-
-    type(SystemType) , intent(inout) :: sys
-    type(ControlType), intent(inout) :: ctrl
-    integer          , intent(in)    :: msim(:)
-    integer          , intent(in)    :: iPerturb          !! Which input to perturb
-    real(dp)         , intent(in)    :: dt                !! incremental time step
-    real(dp)         , intent(in)    :: dy                !! incremental step for use in du/dy
-    integer          , intent(in)    :: numVregOut        !! number of outputs from the controller to read
-    integer          , intent(in)    :: whichVregOut(:)   !! which outputs from the controller to read
-    !                                                     !! which are outputs from the controller
-    real(dp)         , intent(out)   :: uy(:)             !! u(y) = u(y0+dy), output from controller
-    !                                                     !! when input to controller is y = y0+dy
-    integer          , intent(out)   :: ierr
-
-    !! Local variables
-
-    integer, parameter :: ctrlSysMode = 3 ! controller integration mode
-
-    integer :: i
-
-    !! --- Logic section ---
-
-    !! Change time step to dt
-    sys%timeStep = dt
-
-    !! Change input from y0 to y (y = y0+dy)
-    i = ctrl%input(iPerturb)%var !!TODO,bh: Check this
-    ctrl%vreg(i) = ctrl%vreg(i) + dy
-
-    !! Iterate the controller with the new values for y (y = y0+dy)
-    !! and t (t = t0+dt), to derive the value of u(y)
-    call IterateControlSystem (sys,ctrl,ctrlSysMode,msim,ierr,setInput=.false.)
-
-    !! Save the value of u(y) in an array
-    do i = 1, numVregOut
-       uy(i) = ctrl%vreg(whichVregOut(i))
-    end do
-
-  end subroutine PerturbController
-
-
-  subroutine addInControlStructMat (pCS,elMat,sysMat,sam,err)
-
-    !!==========================================================================
-    !! Add element matrix to system matrix
-    !! date/rev   : 2009
-    !!==========================================================================
-
-    use SamModule          , only : SamType
-    use SysMatrixTypeModule, only : SysMatrixType
-    use AsmExtensionModule , only : csAddEM
-    use reportErrorModule  , only : reportError, debugFileOnly_p
-
-    type(ControlStructType), intent(inout) :: pCS
-    real(dp)               , intent(in)    :: elMat(:,:)
-    type(SysMatrixType)    , intent(inout) :: sysMat
-    type(SamType)          , intent(in)    :: sam
-    integer                , intent(out)   :: err
-
-    !! --- Logic section ---
-
-    !! Add this matrix to the system matrix
-    call csAddEM (sam,pCS%samElNum,pCS%nDofs,elMat,sysMat,err)
-    if (err == 0) return
-
-    call reportError (debugFileOnly_p,'AddInControlStructMat')
-
-  end subroutine AddInControlStructMat
 
 
   subroutine EstimateControllerProperties02 (sys, ctrl, msim, &
@@ -1873,6 +1777,74 @@ contains
     goto 900
 
   end subroutine EstimateControllerProperties500
+
+
+  !!============================================================================
+  !> @brief Perturbs one of the inputs of the control system.
+  !>
+  !> @param sys System level model data
+  !> @param ctrl Control system data
+  !> @param[in] msim Matrix of simulation parameters
+  !> @param[in] iPert Which input to perturb
+  !> @param[in] dt Incremental time step
+  !> @param[in] dy Incremental step for use in du/dy
+  !> @param[in] numVregOut Number of outputs from the controller to read
+  !> @param[in] whichVregOut Which outputs from the controller to read
+  !> @param[out] uy Perturbed output from controller, u(y) = u(y0+dy)
+  !> @param[out] ierr Error flag
+  !>
+  !> @details This subroutine perturbs one of the control inputs and calculates
+  !> the reaction in all of the control outputs.
+  !>
+  !> Working order:
+  !> 1) Change the input y for the controller from y0 to y = y0+dy,
+  !>    where dy is a small number. Change the time from t0 to t = t0+dt,
+  !>    where dt is a small number.
+  !> 2) Run this new input through the controller to get the reaction
+  !>    (output) u(y) from the controller due to the change in the input.
+  !>
+  !> @callgraph @callergraph
+  !>
+  !> @author Magne Bratland
+  !>
+  !> @date 18 Sept 2009
+
+  subroutine PerturbController (sys,ctrl,msim,iPert,dt,dy, &
+       &                        numVregOut,whichVregOut,uy,ierr)
+
+    use SystemTypeModule     , only : SystemType, dp
+    use ControlTypeModule    , only : ControlType
+    use ControlRoutinesModule, only : IterateControlSystem
+
+    implicit none
+
+    type(SystemType) , intent(inout) :: sys
+    type(ControlType), intent(inout) :: ctrl
+    integer          , intent(in)    :: msim(:), iPert
+    real(dp)         , intent(in)    :: dt, dy
+    integer          , intent(in)    :: numVregOut, whichVregOut(:)
+    real(dp)         , intent(out)   :: uy(:)
+    integer          , intent(out)   :: ierr
+
+    !! Local variables
+    integer, parameter :: ctrlSysMode = 3 !< controller integration mode
+
+    !! --- Logic section ---
+
+    !! Change time step to dt
+    sys%timeStep = dt
+
+    !! Change input from y0 to y (y = y0+dy)
+    ctrl%vreg(ctrl%input(iPert)%var) = ctrl%vreg(ctrl%input(iPert)%var) + dy
+
+    !! Iterate the controller with the new values for y (y = y0+dy)
+    !! and t (t = t0+dt), to derive the value of u(y)
+    call IterateControlSystem (sys,ctrl,ctrlSysMode,msim,ierr,setInput=.false.)
+
+    !! Save the value of u(y) in an array
+    call DGATHR (numVregOut,whichVregOut(1),ctrl%vreg(1),uy(1),1)
+
+  end subroutine PerturbController
 
 
   !!============================================================================
