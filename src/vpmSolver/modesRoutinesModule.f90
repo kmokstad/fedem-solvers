@@ -786,9 +786,9 @@ contains
     use MechanismTypeModule, only : MechanismType
     use ControlTypeModule  , only : ControlType
     use ControlStructModule, only : ControlStructType
-    use ControlStructModule, only : addInControlStructMat
     use ControlStructModule, only : BuildStructControlJacobi
     use TriadTypeModule    , only : hasLocalDirections, transSysToGlob
+    use AsmExtensionModule , only : csAddEM
     use SolExtensionModule , only : csLanczosEigenSolve, csExpand
     use MatExtensionModule , only : csTransform, csCopyMat
     use AddInSysModule     , only : BuildStiffMat, BuildDamperMat, BuildMassMat
@@ -839,17 +839,18 @@ contains
 
     if (associated(pCS)) then
        !! Call routine for df/dx for controller
-       call BuildStructControlJacobi(pCS,ctrl,sys,sam)
+       call BuildStructControlJacobi (pCS,ctrl,sys,sam%mpar,ierr)
+       if (ierr /= 0) goto 915
        !! Note: If the controller contains non-collocated sensors and actuators,
        !! the matrices will be unsymmetric. However, these will by the existing
        !! code be faulty symmetrizied
-       call addInControlStructMat(pCS,pCS%SSEEMat,modes%Qmat,sam,ierr)
+       call csAddEM (sam,pCS%samElNum,pCS%nDofs,pCS%SSEEMat,modes%Qmat,ierr)
        if (ierr /= 0) goto 915
-       call addInControlStructMat(pCS,pCS%stiffMat,modes%Kmat,sam,ierr)
+       call csAddEM (sam,pCS%samElNum,pCS%nDofs,pCS%stiffMat,modes%Kmat,ierr)
        if (ierr /= 0) goto 915
-       call addInControlStructMat(pCS,pCS%dampMat,modes%Cmat,sam,ierr)
+       call csAddEM (sam,pCS%samElNum,pCS%nDofs,pCS%dampMat,modes%Cmat,ierr)
        if (ierr /= 0) goto 915
-       call addInControlStructMat(pCS,pCS%massMat,modes%Mmat,sam,ierr)
+       call csAddEM (sam,pCS%samElNum,pCS%nDofs,pCS%massMat,modes%Mmat,ierr)
        if (ierr /= 0) goto 915
     end if
 
