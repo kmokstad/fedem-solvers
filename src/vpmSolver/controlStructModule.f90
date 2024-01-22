@@ -61,7 +61,6 @@ module ControlStructModule
      integer :: ctrlSysEigFlag
 
      integer :: samElNum
-     integer :: nNods
      integer :: nDOFs
      integer, pointer :: samMNPC(:)
      integer, pointer :: local_MADOF(:)
@@ -134,6 +133,7 @@ contains
     use ForceTypeModule           , only : ForceType
     use ControlTypeModule         , only : getSensor
     use ReportErrorModule         , only : allocationError
+    use ReportErrorModule         , only : reportError, debugFileOnly_p
 
     type(ControlStructType)   , intent(inout)      :: pCS
     type(CtrlPrm)             , intent(in), target :: inputs(:)
@@ -157,7 +157,19 @@ contains
 
     !! --- Logic section ---
 
-    allocate(lNode_from_SAM_node(numNod), iCin_from_AllVreg(numVreg), STAT=ierr)
+    ierr = 0
+
+    !! Find the control input parameters that have structural sensors
+    !! (triad- and joint dofs only)
+
+    call getCtrlParamsWithStructSensors (inputs,pCS%numStructCtrlParams,tmpIdx)
+    if (pCS%numStructCtrlParams < 0) goto 915
+    if (pCS%numStructCtrlParams == 0) return
+
+    !! Initialize the input side
+
+    allocate(lNode_from_SAM_node(numNod), iCin_from_AllVreg(numVreg), &
+         &   pCS%structToControlSensors(pCS%numStructCtrlParams), STAT=ierr)
     if (ierr /= 0) then
        ierr = allocationError('InitiateControlStruct')
        return
@@ -168,12 +180,6 @@ contains
 
 
     !! SENSOR side initialization
-    !! Find the control input parameters that have structural sensors (triad dofs and joint dofs)
-
-    call getCtrlParamsWithStructSensors (inputs,pCS%numStructCtrlParams,tmpIdx)
-    if (pCS%numStructCtrlParams <= 0 ) return
-
-    allocate(pCS%structToControlSensors(pCS%numStructCtrlParams))
 
     do i = 1, pCS%numStructCtrlParams
        pS          => pCS%structToControlSensors(i)
@@ -218,7 +224,11 @@ contains
     end do
 
     !! Set which vreg in (with structural input) are to be perturbed
-    allocate(pCS%whichVregIn(pCS%numVregIn))
+    allocate(pCS%whichVregIn(pCS%numVregIn), STAT=ierr)
+    if (ierr /= 0) then
+       ierr = allocationError('InitiateControlStruct 2')
+       return
+    end if
 
     !! Set which iCin this sensor is connected to
     do i = 1, pCS%numStructCtrlParams
@@ -235,13 +245,17 @@ contains
     !! FORCES side initialization
     !! Find the forces whose sensor is a controller variable
 
-    allocate( iCout_from_AllVreg(numVreg) )
-    iCout_from_AllVreg  = 0
-
     call getCtrlOutForces (forces, pCS%numControlForces, tmpIdx)
-    if (pCS%numControlForces <= 0) return
+    if (pCS%numControlForces < 0) goto 915
 
-    allocate(pCS%controlForces(pCS%numControlForces))
+    allocate(pCS%controlForces(pCS%numControlForces), &
+         &   iCout_from_AllVreg(numVreg), STAT=ierr)
+    if (ierr /= 0) then
+       ierr = allocationError('InitiateControlStruct 3')
+       return
+    end if
+
+    iCout_from_AllVreg = 0
 
     do i = 1, pCS%numControlForces
        pF         => pCS%controlForces(i)
@@ -275,7 +289,11 @@ contains
     end do
 
     !! Set which vreg in are to be read
-    allocate(pCS%whichVregOut(pCS%numVregOut))
+    allocate(pCS%whichVregOut(pCS%numVregOut), STAT=ierr)
+    if (ierr /= 0) then
+       ierr = allocationError('InitiateControlStruct 3')
+       return
+    end if
 
     do i = 1, pCS%numControlForces
        whichVreg                  = pCS%controlForces(i)%whichVreg
@@ -299,10 +317,12 @@ contains
 
     !! Allocate and initialize MNPC
 
-    pCS%nNods = nElNodes
+    allocate(pCS%samMNPC(nElNodes), pCS%local_MADOF(nElNodes+1), STAT=ierr)
+    if (ierr /= 0) then
+       ierr = allocationError('InitiateControlStruct 4')
+       return
+    end if
 
-    allocate(pCS%samMNPC(nElNodes))
-    allocate(pCS%local_MADOF(nElNodes+1))
     pCS%local_MADOF = 0
 
     do iSam = 1, size(lNode_from_SAM_node)   !! Loop over all sam node nums
@@ -361,6 +381,9 @@ contains
 
     end do
 
+    !! Clean up some scratch space
+    deallocate(lNode_from_SAM_node)
+
     !! Now accumulate the dofStart
 
     iStart = 1
@@ -371,16 +394,7 @@ contains
     end do
 
     !! Number of total dofs for this element
-    pCS%nDOFs = pCS%local_MADOF(pCS%nNods+1)-1
-
-    allocate(pCS%Grad_CinWrtSensor(pCS%numVregIn,pCS%nDofs))
-    allocate(pCS%Grad_CoutWrtCin(pCS%numVregOut,pCS%numVregIn))
-    allocate(pCS%Grad_ForceWrtCout(pCS%nDofs,pCS%numVregOut))
-    allocate(pCS%ctrlProps(pCS%numVregOut,4,pCS%numVregIn))
-    allocate(pCS%massMat(pCS%nDofs,pCS%nDofs))
-    allocate(pCS%dampMat(pCS%nDofs,pCS%nDofs))
-    allocate(pCS%stiffMat(pCS%nDofs,pCS%nDofs))
-    allocate(pCS%SSEEMat(pCS%nDofs,pCS%nDofs))
+    pCS%nDOFs = pCS%local_MADOF(nElNodes+1)-1
 
     !! Also store the dofStart in the forces and sensors
 
@@ -397,9 +411,20 @@ contains
        pF%dofStart = pCS%local_MADOF(pF%lNode)
     end do
 
-    !! Clean up some scratch space
-    deallocate( lNode_from_SAM_node )
+    allocate(pCS%Grad_CinWrtSensor(pCS%numVregIn,pCS%nDofs), &
+         &   pCS%Grad_CoutWrtCin(pCS%numVregOut,pCS%numVregIn), &
+         &   pCS%Grad_ForceWrtCout(pCS%nDofs,pCS%numVregOut), &
+         &   pCS%ctrlProps(pCS%numVregOut,4,pCS%numVregIn), &
+         &   pCS%massMat(pCS%nDofs,pCS%nDofs), &
+         &   pCS%dampMat(pCS%nDofs,pCS%nDofs), &
+         &   pCS%stiffMat(pCS%nDofs,pCS%nDofs), &
+         &   pCS%SSEEMat(pCS%nDofs,pCS%nDofs), STAT=ierr)
+    if (ierr /= 0) ierr = allocationError('InitiateControlStruct 5')
 
+    return
+
+915 ierr = -1
+    call reportError (debugFileOnly_p,'InitiateControlStruct')
 
   end subroutine InitiateControlStruct
 
@@ -427,6 +452,11 @@ contains
           numStructCtrlParams = numStructCtrlParams + 1
        end if
     end do
+    if (numStructCtrlParams == 0) then
+       call reportError (warning_p,'No structural inputs in control system.', &
+            'Coupled control system modal analysis is therefore switched off.')
+       return
+    end if
 
     allocate(ctrlParamsWithStructSensors(numStructCtrlParams),stat=iPrm)
     if (iPrm /= 0) then
@@ -477,7 +507,7 @@ contains
   subroutine getCtrlOutForces (forces,numCtrlOutForces,ctrlOutForces)
 
     use ForceTypeModule  , only : ForceType
-    use ReportErrorModule, only : allocationError
+    use ReportErrorModule, only : allocationError, reportError, warning_p
 
     type(ForceType), target, intent(in)  :: forces(:)
     integer,                 intent(out) :: numCtrlOutForces
@@ -494,7 +524,10 @@ contains
           numCtrlOutForces = numCtrlOutForces + 1
        end if
     end do
-    if (numCtrlOutForces == 0) return
+    if (numCtrlOutForces == 0) then
+       call reportError (warning_p,'No control output forces in the model')
+       return
+    end if
 
     allocate(ctrlOutForces(numCtrlOutForces),stat=iCtrl)
     if (iCtrl /= 0) then

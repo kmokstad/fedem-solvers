@@ -465,6 +465,11 @@ contains
             &                      mech%triads, mech%joints, mech%forces, &
             &                      size(ctrl%vreg), sam%nnod, err)
        if (err < 0) goto 980
+
+       if (ctrlStruct%numStructCtrlParams < 1) then
+          deallocate(ctrlStruct)
+          nullify(ctrlStruct)
+       end if
     end if
 
     !! Establish the SAM arrays MPMNPC and MMNPC (element topology)
