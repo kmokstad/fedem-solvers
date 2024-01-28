@@ -580,7 +580,6 @@ contains
     !! Local variables
     integer  :: i, iNode, iCin, iCout, iStart, nStep
     real(dp) :: sGrad(12), fGrad(6)
-    real(dp), allocatable :: dScr(:,:)        !! Scratch for matrix multiply
 
     !! --- Logic section ---
 
@@ -687,36 +686,21 @@ contains
     end select
     if (ierr < 0) goto 915
 
-
-    allocate(dScr(pCS%nDofs,pCS%numVregIn))
-
     !! Steady-state error elimination matrix (Q)
-    dScr         = 0.0_dp
-    pCS%SSEEMat  = 0.0_dp
-    dScr         = matmul(pCS%Grad_ForceWrtCout,pCS%ctrlProps(:,1,:))
-    pCS%SSEEMat  = matmul(dScr,pCS%Grad_CinWrtSensor)
-    pCS%SSEEMat  = pCS%SSEEMat*(-1.0_dp)
+    call dMMM (pCS%SSEEMat,pCS%ctrlProps(:,1,:),ierr)
+    if (ierr < 0) goto 915
 
     !! Stiffness matrix (K)
-    dScr         = 0.0_dp
-    pCS%stiffMat = 0.0_dp
-    dScr         = matmul(pCS%Grad_ForceWrtCout,pCS%ctrlProps(:,2,:))
-    pCS%stiffMat = matmul(dScr,pCS%Grad_CinWrtSensor)
-    pCS%stiffMat = pCS%stiffMat*(-1.0_dp)
+    call dMMM (pCS%stiffMat,pCS%ctrlProps(:,2,:),ierr)
+    if (ierr < 0) goto 915
 
     !! Damping matrix (C)
-    dScr         = 0.0_dp
-    pCS%dampMat  = 0.0_dp
-    dScr         = matmul(pCS%Grad_ForceWrtCout,pCS%ctrlProps(:,3,:))
-    pCS%dampMat  = matmul(dScr,pCS%Grad_CinWrtSensor)
-    pCS%dampMat  = pCS%dampMat*(-1.0_dp)
+    call dMMM (pCS%dampMat,pCS%ctrlProps(:,3,:),ierr)
+    if (ierr < 0) goto 915
 
     !! Mass matrix (M)
-    dScr         = 0.0_dp
-    pCS%massMat  = 0.0_dp
-    dScr         = matmul(pCS%Grad_ForceWrtCout,pCS%ctrlProps(:,4,:))
-    pCS%massMat  = matmul(dScr,pCS%Grad_CinWrtSensor)
-    pCS%massMat  = pCS%massMat*(-1.0_dp)
+    call dMMM (pCS%massMat,pCS%ctrlProps(:,4,:),ierr)
+    if (ierr < 0) goto 915
 
     !! Check for symmetry
     pCS%SSEEMatIsNonSymmetric  = isNonSymmetric(pCS%SSEEMat)
@@ -739,13 +723,37 @@ contains
 !       end do
 !    end do
 
-    deallocate(dScr)
-
     return
 
 915 call reportError (debugFileOnly_p,'BuildStructControlJacobi')
 
   contains
+
+    !> @brief Performs the matrix-matrix multiplication Cmat = A*ctrlProp*B.
+    !> @details A = pCS%Grad_ForceWrtCout and B = pCS%Grad_CinWrtSensor.
+    !> Using LAPACK::DGEMM('N','N',m,n,k,alpha,A,ldA,B,ldB,beta,C,ldC)
+    subroutine dmmm (Cmat,ctrlProp,ierr)
+      use scratchArrayModule, only : getRealScratchArray
+      real(dp), intent(out) :: Cmat(:,:)
+      real(dp), intent(in)  :: ctrlProp(:,:)
+      integer , intent(out) :: ierr
+      real(dp), pointer     :: rWork(:)
+      rWork => getRealScratchArray(pCS%nDofs*pCS%numVregIn,ierr)
+      if (ierr == 0) then
+         !! rWork(nDofs,nVregIn) = Grad_ForceWrtCout(nDofs,nVregOut)
+         !!                      * ctrlProp(nVregOut,nVregIn)
+         call DGEMM ('N','N', pCS%nDofs, pCS%numVregIn, pCS%numVregOut, &
+              &       1.0_dp, pCS%Grad_ForceWrtCout(1,1), pCS%nDofs, &
+              &               ctrlProp(1,1), pCS%numVregOut, &
+              &       0.0_dp, rWork(1), pCS%nDofs)
+         !! Cmat(nDofs,nDofs) = -rWork(nDofs,nVregIn)
+         !!                   * Grad_CinWrtSensor(nVregIn,nDofs)
+         call DGEMM ('N','N', pCS%nDofs,  pCS%nDofs, pCS%numVregIn,&
+              &      -1.0_dp, rWork(1), pCS%nDofs, &
+              &               pCS%Grad_CinWrtSensor(1,1), pCS%numVregIn, &
+              &       0.0_dp, Cmat(1,1), pCS%nDofs)
+      end if
+    end subroutine dmmm
 
     !> @brief Checks if the matrix @b A has non-symmetric terms.
     function isNonSymmetric (A)
