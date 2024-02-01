@@ -17,11 +17,9 @@
 
 module ControlStructModule
 
-  use ControlTypeModule         , only : CtrlPrm
-  use SensorTypeModule          , only : SensorType, dp
-  use TriadTypeModule           , only : TriadType, IdType
-  use ForceTypeModule           , only : ForceType
-  use MasterSlaveJointTypeModule, only : MasterSlaveJointType
+  use ControlTypeModule, only : CtrlPrm
+  use SensorTypeModule , only : SensorType, IdType, dp
+  use ForceTypeModule  , only : ForceType
 
   implicit none
 
@@ -34,12 +32,9 @@ module ControlStructModule
      integer                    :: lNode(2)        !! Local node number for the element matrecies
      integer                    :: dofStart(2)     !! Local dof start for this node
      integer                    :: nDofs(2)        !! number of dofs for this node
-     type(CtrlPrm), pointer :: pCtrlPrm        !! pointer to the control parameter which has
+     type(CtrlPrm)    , pointer :: pCtrlPrm        !! pointer to the control parameter which has
      !                                             !! structural input
      type(SensorType),  pointer :: pSensor         !! The actual sensor pointer
-     type(TriadType),   pointer :: pTriad1         !! non null if sensor on a triade disp, vel, or accel
-     type(TriadType),   pointer :: pTriad2         !! non null if relative sensor on triads
-     type(MasterSlaveJointType), pointer :: pJoint !! non null if sensor on a joint dof
 
      !! ?? How to handle pos, vel, or accel ???
   end type StructSensorGradType
@@ -145,6 +140,8 @@ contains
 
     !! Local variables
 
+    type(TriadType)           , pointer :: pTriad1, pTriad2
+    type(MasterSlaveJointType), pointer :: pJoint
     type(StructSensorGradType), pointer :: pS
     type(ForceControlGradType), pointer :: pF
 
@@ -192,23 +189,18 @@ contains
 
        select case (pS%pSensor%type)
        case (TRIAD_p)
-          pS%pTriad1 => triads(pS%pSensor%index)
-          nullify(pS%pTriad2)
-          nullify(pS%pJoint)
-          lNode_from_SAM_node(pS%pTriad1%samNodNum) = 1
+          pTriad1 => triads(pS%pSensor%index)
+          lNode_from_SAM_node(pTriad1%samNodNum) = 1
 
        case (RELATIVE_TRIAD_p)
-          pS%pTriad1 => triads(pS%pSensor%index)
-          pS%pTriad2 => triads(pS%pSensor%index2)
-          nullify(pS%pJoint)
-          lNode_from_SAM_node(pS%pTriad1%samNodNum) = 1
-          lNode_from_SAM_node(pS%pTriad2%samNodNum) = 1
+          pTriad1 => triads(pS%pSensor%index)
+          pTriad2 => triads(pS%pSensor%index2)
+          lNode_from_SAM_node(pTriad1%samNodNum) = 1
+          lNode_from_SAM_node(pTriad2%samNodNum) = 1
 
        case (JOINT_VARIABLE_p)
-          nullify(pS%pTriad1)
-          nullify(pS%pTriad2)
-          pS%pJoint => joints(pS%pSensor%index)
-          lNode_from_SAM_node(pS%pJoint%samNodNum) = 1
+          pJoint => joints(pS%pSensor%index)
+          lNode_from_SAM_node(pJoint%samNodNum) = 1
 
        end select
 
@@ -334,51 +326,52 @@ contains
 
     !! Set the local node association and dofStart for all the forces and sensors
 
-
-    n = size(pCS%structToControlSensors)
-    do i = 1,n
+    do i = 1, size(pCS%structToControlSensors)
        pS => pCS%structToControlSensors(i)
        pS%lNode    = 0
+       pS%nDOFs    = 0
        pS%dofStart = 0
 
-       if ( associated(pS%pTriad1)) then
-          pS%lNode(1)             = lNode_from_SAM_node(pS%pTriad1%samNodNum)
-          pCS%local_MADOF(pS%lNode(1))= pS%pTriad1%nDOFs
-          pS%nDOFs(1)             = pS%pTriad1%nDOFs
-       end if
+       select case (pS%pSensor%type)
+       case (TRIAD_p)
+          pTriad1 => triads(pS%pSensor%index)
+          pS%lNode(1) = lNode_from_SAM_node(pTriad1%samNodNum)
+          pS%nDOFs(1) = pTriad1%nDOFs
 
-       if ( associated(pS%pTriad2)) then
-          pS%lNode(2)             = lNode_from_SAM_node(pS%pTriad2%samNodNum)
-          pCS%local_MADOF(pS%lNode(2))= pS%pTriad2%nDOFs
-          pS%nDOFs(2)             = pS%pTriad2%nDOFs
-       end if
+       case (RELATIVE_TRIAD_p)
+          pTriad1 => triads(pS%pSensor%index)
+          pTriad2 => triads(pS%pSensor%index2)
+          pS%lNode(1) = lNode_from_SAM_node(pTriad1%samNodNum)
+          pS%nDOFs(1) = pTriad1%nDOFs
+          pS%lNode(2) = lNode_from_SAM_node(pTriad2%samNodNum)
+          pS%nDOFs(2) = pTriad2%nDOFs
 
-       if ( associated(pS%pJoint))  then
-          pS%lNode(1)             = lNode_from_SAM_node(pS%pJoint%samNodNum)
-          pCS%local_MADOF(pS%lNode(2))= pS%pJoint%nJointDOFs
-          pS%nDOFs(1)             = pS%pJoint%nJointDOFs
-       end if
+       case (JOINT_VARIABLE_p)
+          pJoint => joints(pS%pSensor%index)
+          pS%lNode(1) = lNode_from_SAM_node(pJoint%samNodNum)
+          pS%nDOFs(1) = pJoint%nJointDOFs
+       end select
 
+       do n = 1, 2
+          if (pS%lNode(n) > 0) pCS%local_MADOF(pS%lNode(n)) = pS%nDOFs(n)
+       end do
     end do
 
-    n = size(pCS%controlForces)
-    do i = 1,n
+    do i = 1, size(pCS%controlForces)
        pF => pCS%controlForces(i)
-       pF%lNode    = 0
-       pF%dofStart = 0
 
        if      (associated(pF%pForce%triad)) then
-          pF%lNode             = lNode_from_SAM_node(pF%pForce%triad%samNodNum)
-          pCS%local_MADOF(pF%lNode)= pF%pForce%triad%nDOFs
-          pF%nDOFs             = pF%pForce%triad%nDOFs
-
+          pF%lNode = lNode_from_SAM_node(pF%pForce%triad%samNodNum)
+          pF%nDOFs = pF%pForce%triad%nDOFs
        else if (associated(pF%pForce%joint)) then
-          pF%lNode             = lNode_from_SAM_node(pF%pForce%joint%samNodNum)
-          pCS%local_MADOF(pF%lNode)= pF%pForce%joint%nJointDOFs
-          pF%nDOFs             = pF%pForce%joint%nJointDOFs
-
+          pF%lNode = lNode_from_SAM_node(pF%pForce%joint%samNodNum)
+          pF%nDOFs = pF%pForce%joint%nJointDOFs
+       else
+          pF%lNode = 0
+          pF%nDOFs = 0
        end if
 
+       if (pF%lNode > 0) pCS%local_MADOF(pF%lNode) = pF%nDOFs
     end do
 
     !! Clean up some scratch space
