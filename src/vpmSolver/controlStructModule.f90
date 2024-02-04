@@ -588,8 +588,8 @@ contains
     pCS%Grad_ForceWrtCout = 0.0_dp
 
     do iForce = 1, size(pCS%controlForces)
-       call calcExtTriadForceGradient(pCS%controlForces(iForce)%pForce, &
-            &                         pCS%controlForces(iForce)%forceGrad_wrt_cOut, ierr)
+       call calcExtForceGradient (pCS%controlForces(iForce)%pForce, &
+            &                     pCS%controlForces(iForce)%forceGrad_wrt_cOut, ierr)
 
             !! Insert into Grad_ForceWrtCout
             iStart = pCS%controlForces(iForce)%dofStart
@@ -4126,97 +4126,6 @@ subroutine EstimateControllerProperties03(sys,mech,ctrl,msim,       &
     END DO
     errorflag = 0
   END SUBROUTINE FINDinv
-
-
-  subroutine setFixedControlDOFsOnEigValCalc(forces)
-
-    !!==========================================================================
-    !! Purpose:
-    !! Set DOFs for triades, where a force, whose source is a control system, is acting,
-    !! to fixed during eigenvalue calculations and free else.
-    !!
-    !! Working order:
-    !! 1) Get all forces in an array
-    !! 2) Search through that array and find all forces whose source (i.e. engine)
-    !! 	  is a control system
-    !! 3) For all forces whose source is a control system:
-    !!  3.1) Find out the direction of the force
-    !!  3.2) Set value for BCs for the triad, where the force is working, to 2
-    !!
-    !! Programmer : Magne Bratland
-    !! date/rev   : 19 Feb 2009 / 1.0
-    !!==========================================================================
-
-    use ReportErrorModule
-    use ForceTypeModule    !, only : ForceType
-    use FunctionTypeModule !, only : EngineType
-    use SensorTypeModule   !, only : SensorType
-    use TriadTypeModule    !, only : TriadType
-    use MasterSlaveJointTypeModule
-
-    implicit none
-
-    type(ForceType), intent(inout), target :: forces(:)  !! Array of forces
-
-    type(ForceType) , pointer :: force
-    type(EngineType), pointer :: enginePointer
-    type(SensorType), pointer :: argSensorPointer
-    type(TriadType) , pointer :: triadPointer
-    type(MasterSlaveJointType), pointer :: jointPointer
-
-    integer :: dof
-    integer :: nForces, i
-
-    !! Search through array called forces and find all forces whose source is a control system
-    nForces = size(forces)
-    do i = 1, nForces
-       force => forces(i)
-       dof = force%dof
-
-       enginePointer => force%engine
-       if (.not. associated(enginePointer)) cycle
-
-       argSensorPointer => enginePointer%args(1)%p
-       if (.not. associated(argSensorPointer)) cycle
-
-       if (.not. argSensorPointer%type == CONTROL_p) cycle
-
-       triadPointer => force%triad
-       jointPointer => force%joint
-
-       if ( associated(triadPointer) ) then
-
-          !! Find out in which direction the force works
-
-          if (dof == -2) then                        !! The force is a multi-dimensional moment
-             triadPointer%BC(4:6) = 2                !! Set value for BC 4, 5 and 6 to 2
-             call reportError (note_p, &
-                  & 'MAGNE: Actually setting fixed BC for control eig dof, all rotation')
-
-          else if (dof == -1) then                   !! The force is a multi-dimensional force
-             triadPointer%BC(1:3) = 2                !! Set value for BC 1, 2 and 3 to 2
-             call reportError (note_p, &
-                  & 'MAGNE: Actually setting fixed BC for control eig dof, all translation')
-
-                                                     !! The direction of the force is a pure one-dimensional force		
-          else if ((dof > 0) .and. (dof < 7))  then
-             triadPointer%BC(dof) = 2                !! Set value for BC in direction of dof to 2
-             call reportError (note_p, &
-                  & 'MAGNE: Actually setting fixed BC for control eig dof, single dof')
-          else
-             call reportError (note_p,'MAGNE: Actually NOT setting fixed BC for control eig dof')
-             !! ERROR        !TODO, Magne: error message
-          end if
-
-       else if ( associated(jointPointer)) then
-          !! Set joint dof to zero
-       else
-          !! Error condition ?
-       end if
-
-    end do
-
-  end subroutine setFixedControlDOFsOnEigValCalc
 
 
  !! Backup of old subroutine

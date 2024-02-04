@@ -376,13 +376,12 @@ contains
     use initiateUserdefElTypeModule,only : InitiateUserdefEls
     use GenericPartModule         , only : InitiateGenericParts
     use EngineRoutinesModule      , only : SetPointersForSensors
+    use ForceTypeModule           , only : FixControlDOFsOnEigValCalc
     use FNVwaveForceModule        , only : InitiateWaveSpectrumFNV
     use FNVwaveForceModule        , only : InitiateFNVkinematics, calcFNVforces
     use ControlStructModule       , only : InitiateControlStruct
-    use ControlStructModule       , only : SetFixedControlDOFsOnEigValCalc
     use FileUtilitiesModule       , only : findUnitNumber
-    use ReportErrorModule         , only : reportError
-    use ReportErrorModule         , only : note_p, error_p, debugFileOnly_p
+    use ReportErrorModule         , only : reportError, error_p, debugFileOnly_p
     use FFaCmdLineArgInterface    , only : ffa_cmdlinearg_isTrue
 
     type(SamType)      , intent(out)   :: sam
@@ -436,8 +435,8 @@ contains
 
     if (ffa_cmdlinearg_isTrue('fixControlDOFsEig')) then
        !! Fix DOFs in eigenvalue calculation for control output forces
-       call reportError (note_p,'Setting fixed BC for control output DOFs')
-       call SetFixedControlDOFsOnEigValCalc (mech%forces)
+       call FixControlDOFsOnEigValCalc (mech%forces,err)
+       if (err /= 0) goto 900
     end if
 
     !! Establish the SAM arrays MADOF and MSC (nodal DOF data)
