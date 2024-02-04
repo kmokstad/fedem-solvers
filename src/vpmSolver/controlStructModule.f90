@@ -559,7 +559,7 @@ contains
 
     use ControlTypeModule   , only : ControlType
     use SystemTypeModule    , only : SystemType
-    use ForceRoutinesModule , only : calcExtTriadForceGradient
+    use ForceRoutinesModule , only : calcExtForceGradient
     use EngineRoutinesModule, only : SensorGradient
     use ReportErrorModule   , only : reportError, debugFileOnly_p
 
@@ -584,7 +584,7 @@ contains
     pCS%Grad_ForceWrtCout = 0.0_dp
 
     do i = 1, size(pCS%controlForces)
-       call calcExtTriadForceGradient (pCS%controlForces(i)%pForce, fGrad, ierr)
+       call calcExtForceGradient (pCS%controlForces(i)%pForce, fGrad, ierr)
        if (ierr < 0) goto 915
 
        !! Insert into Grad_ForceWrtCout

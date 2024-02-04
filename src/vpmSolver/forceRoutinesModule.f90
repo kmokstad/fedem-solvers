@@ -22,7 +22,7 @@ module ForceRoutinesModule
 
   private
 
-  public :: updateExternalForces, addInExternalForces, calcExtTriadForceGradient
+  public :: updateExternalForces, addInExternalForces, calcExtForceGradient
 
 
 contains
@@ -252,7 +252,8 @@ contains
        eV(4:6) = force%F * force%forceDir
        call transGlobToSys (force%triad,eV(4:6))
 
-    case (1:6) ! The force is acting directly on a nodal dof
+    case (1:6)
+       !! The force is acting directly on a nodal DOF
        eV(force%dof) = force%F
        if (force%updateFlag > 9) then
           !! Apply the load in local triad axes.
@@ -268,18 +269,20 @@ contains
   end subroutine calcExtTriadForce
 
 
-  subroutine calcExtTriadForceGradient (force,eV,ierr)
+  !!============================================================================
+  !> @brief Calculates the system force gradient vector from an external force.
+  !>
+  !> @param[in] force The external point load object to calculate gradient for
+  !> @param[out] eV Nodal force vector
+  !> @param[out] ierr Error flag
+  !>
+  !> @callgraph @callergraph
+  !>
+  !> @author Bjorn Haugen
+  !>
+  !> @date 24 Jun 2009
 
-    !!==========================================================================
-    !! Calculates the system force gradient vector from an external force
-    !! acting on a Triad.
-    !!
-    !! Calculates gradient w.r.t engine input for an external force
-    !! TODO: handle joint forces
-    !!
-    !! Programmer : Bjorn Haugen
-    !! date/rev   : 24  Jun 2009 / 1.0
-    !!==========================================================================
+  subroutine calcExtForceGradient (force,eV,ierr)
 
     use ForceTypeModule     , only : ForceType, forceVec_p, momentVec_p, dp
     use EngineRoutinesModule, only : EngineRate
@@ -291,37 +294,45 @@ contains
     integer        , intent(out) :: ierr
 
     !! Local variables
-    real(dp) :: engineGrad
+    real(dp) :: eGrad
 
     !! --- Logic section ---
 
     ierr = 0
     eV = 0.0_dp
     if (associated(force%engine)) then
-       engineGrad = force%f1 * EngineRate(force%engine,ierr)
+       eGrad = force%f1 * EngineRate(force%engine,ierr)
     else
-       engineGrad = force%f1
+       return ! No gradient for constant forces
     end if
 
-    select case (force%dof)
+    if (associated(force%triad)) then
+       select case (force%dof)
 
-    case (forceVec_p)
-       eV(1:3) = engineGrad * force%forceDir
-       call transGlobToSys (force%triad,eV(1:3))
+       case (forceVec_p)
+          eV(1:3) = eGrad * force%forceDir
+          call transGlobToSys (force%triad,eV(1:3))
 
-    case (momentVec_p)
-       eV(4:6) = engineGrad * force%forceDir
-       call transGlobToSys (force%triad,eV(4:6))
+       case (momentVec_p)
+          eV(4:6) = eGrad * force%forceDir
+          call transGlobToSys (force%triad,eV(4:6))
 
-    case (1:6) ! The force is acting directly on a nodal dof
-       eV(force%dof) = engineGrad
-       call transTriadToSys (force%triad,eV(1:force%triad%nDOFs))
+       case (1:6)
+          !! The force is acting directly on a nodal DOF
+          eV(force%dof) = eGrad
+          call transTriadToSys (force%triad,eV(1:force%triad%nDOFs))
 
-    case default
-       ierr = internalError('calcExtTriadForceEngineGradient')
+       case default
+          ierr = internalError('calcExtForceEngineGradient')
 
-    end select
+       end select
+    else if (associated(force%joint)) then
 
-  end subroutine calcExtTriadForceGradient
+       !! The force is acting directly on a joint DOF
+       eV(force%dof) = eGrad
+
+    end if
+
+  end subroutine calcExtForceGradient
 
 end module ForceRoutinesModule
