@@ -121,13 +121,17 @@ contains
        call shareMatrixStructure (modes%Kmat,sys%Nmat)
        call shareMatrixStructure (modes%Cmat,sys%Nmat)
        call shareMatrixStructure (modes%Mmat,sys%Nmat)
-       call shareMatrixStructure (modes%Qmat,sys%Nmat)
+       if (modes%solver == 6) then
+          call shareMatrixStructure (modes%Qmat,sys%Nmat)
+       end if
 
        !! Allocate system matrices for eigenvalue solver
        call allocateSysMatrix (modes%Kmat,err)
        call allocateSysMatrix (modes%Cmat,err)
        call allocateSysMatrix (modes%Mmat,err)
-       call allocateSysMatrix (modes%Qmat,err)
+       if (modes%solver == 6) then
+          call allocateSysMatrix (modes%Qmat,err)
+       end if
        if (err < 0) then
           call reportError (debugFileOnly_p,'InitiateModes')
           return
