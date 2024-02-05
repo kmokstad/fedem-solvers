@@ -211,10 +211,8 @@ module SysMatrixTypeModule
   !> @brief Standard routine for writing an object to file.
   interface writeObject
      module procedure writeSysMat
-     module procedure writeSysMat2
      module procedure writeSkyMat
      module procedure writeSparseMat
-     module procedure writeSparseStructure
      module procedure writePardisoMat
   end interface
 
@@ -1250,7 +1248,7 @@ contains
   !> @param[in] this The sysmatrixtypemodule::sysmatrixtype object to convert
   !> @param[out] fullMat Rectangular matrix representation of @a this
   !> @param[in] ndim Max dimension on @a fullMat
-  !> @param[in] startRow First row in @a fullMat to insert reactangular matrix
+  !> @param[in] startRow First row in @a fullMat to insert rectangular matrix
   !> @param[in] ksa Sign of converted matrix
   !> @param[out] ierr Error flag
   !>
@@ -1281,7 +1279,7 @@ contains
     mdim = min(ndim,this%dim,nrow-i0)
     if (abs(ksa) < 10) fullMat = 0.0_dp
 
-    if (.not. associated(this%value)) return
+    if (.not.associated(this%value) .or. mdim < 1) return
 
     select case (this%storageType)
 
@@ -1334,8 +1332,7 @@ contains
   !!============================================================================
   !> @brief Standard routine for writing an object to file.
   !>
-  !> @param this The sysmatrixtypemodule::sysmatrixtype object to write
-  !> @param[in] mpar Matrix of parameters
+  !> @param[in] this The sysmatrixtypemodule::sysmatrixtype object to write
   !> @param[in] io File unit number to write to
   !> @param[in] text If present, write as heading
   !> @param[in] nelL Number of matrix elements to write per line
@@ -1347,13 +1344,13 @@ contains
   !>
   !> @date 26 Feb 2003
 
-  subroutine WriteSysMat (this,mpar,io,text,nelL,complexity)
+  subroutine WriteSysMat (this,io,text,nelL,complexity)
 
     use ManipMatrixModule, only : writeObject
     use FELinearSolver   , only : GSFDump
 
-    type(SysMatrixType),     intent(inout) :: this
-    integer                   , intent(in) :: mpar(:), io
+    type(SysMatrixType)       , intent(in) :: this
+    integer                   , intent(in) :: io
     character(len=*), optional, intent(in) :: text
     integer         , optional, intent(in) :: nelL, complexity
 
@@ -1361,6 +1358,16 @@ contains
     integer :: i, n
 
     !! --- Logic section ---
+
+    if (present(complexity)) then
+       if (complexity > 10) then
+          !! Only write the sparse matrix data structure
+          if (associated(this%sparse)) then
+             call writeSparseStructure (this%sparse,io,complexity-10,text)
+          end if
+          return
+       end if
+    end if
 
     if (present(text)) write(io,'(/A)') text
 
@@ -1378,10 +1385,10 @@ contains
     end if
 
     if (present(complexity)) then
-       if (complexity > 2 .and. associated(this%meqn)) then
+       if (complexity > 1 .and. associated(this%meqn)) then
           n = size(this%meqn)
           write(io,*)
-          write(io,*) 'MEQN', mpar(3), n
+          write(io,*) 'MEQN', n
           write(io,'(2I8)') (i,this%meqn(i),i=1,n)
           write(io,*)
        end if
@@ -1428,38 +1435,6 @@ contains
     end select
 
   end subroutine WriteSysMat
-
-
-  !!============================================================================
-  !> @brief Standard routine for writing an object to file.
-  !>
-  !> @param this The sysmatrixtypemodule::sysmatrixtype object to write
-  !> @param[in] io File unit number to write to
-  !> @param[in] text If present, write as heading
-  !> @param[in] complexity If present, the value indicates the amount of print
-  !>
-  !> @details This subroutine only writes the data structure for sparse matrix.
-  !>
-  !> @callergraph
-  !>
-  !> @author Knut Morten Okstad
-  !>
-  !> @date 26 Feb 2003
-
-  subroutine WriteSysMat2 (this,io,text,complexity)
-
-    type(SysMatrixType)       , intent(in) :: this
-    integer                   , intent(in) :: io
-    character(len=*), optional, intent(in) :: text
-    integer         , optional, intent(in) :: complexity
-
-    !! --- Logic section ---
-
-    if (this%storageType == sparseMatrix_p .and. associated(this%sparse)) then
-       call writeSparseStructure (this%sparse,io,complexity,text)
-    end if
-
-  end subroutine WriteSysMat2
 
 
   !!============================================================================
@@ -1545,6 +1520,10 @@ contains
   !> @param[in] nelLin Number of lines per matrix to write
   !> @param[in] complexity If present, the value indicates the amount of print
   !>
+  !> @details If @a complexity equals 3, the matrix is written as a full matrix
+  !> no matter its size, otherwise it is printed as full only if its size is
+  !> less than or equal to @a nelLin (or 10 if @a nelLin is not specified).
+  !>
   !> @callergraph
   !>
   !> @author Knut Morten Okstad
@@ -1562,8 +1541,8 @@ contains
     integer, optional      , intent(in) :: nelLin, complexity
 
     !! Local variables
-    integer           :: lerr, nelL
-    integer(ik)       :: i, n
+    integer           :: lerr, nelL, nelLL
+    integer(ik)       :: i, n, npar
     real(dp), pointer :: fullMat(:,:)
 
     !! --- Logic section ---
@@ -1573,15 +1552,18 @@ contains
     else
        nelL = 10
     end if
+    nelLL = nelL
 
+    n = sparse%mspar(8)
     if (present(complexity)) then
-       if (complexity > 3) then
-          n = size(sparse%mspar)
+       if (complexity == 3) then
+          nelL = int(n) ! Force write as full matrix
+       else if (complexity > 3) then
+          npar = size(sparse%mspar)
           write(io,*)
-          write(io,*) 'MSPAR', n
-          write(io,'(2I8)') (i,sparse%mspar(i),i=1,n)
+          write(io,*) 'MSPAR', npar
+          write(io,'(2I8)') (i,sparse%mspar(i),i=1,npar)
           if (sparse%mspar(58) > 0_ik) then
-             n = sparse%mspar(8)
              write(io,*)
              write(io,*) 'PERI2E, PERE2I', n
              write(io,'(3I8)') (i,sparse%msifa(i),sparse%msifa(n+i),i=1_ik,n)
@@ -1589,14 +1571,13 @@ contains
        end if
     end if
 
-    n = sparse%mspar(8)
     if (n <= int(nelL,ik)) then
        fullMat => getRealScratchMatrix(int(n),int(n),lerr)
        if (lerr == 0) then
           !! Write out as full matrix
           call SPRCNV (matrix(n+1), fullMat(1,1), sparse%mspar(1), &
                &       sparse%mtrees(1), sparse%msifa(1), n, 1_ik, int(io,ik),i)
-          if (i == 0_ik) call writeObject (fullMat,io,nelLin=nelL)
+          if (i == 0_ik) call writeObject (fullMat,io,nelLin=nelLL)
           return
        end if
     end if
