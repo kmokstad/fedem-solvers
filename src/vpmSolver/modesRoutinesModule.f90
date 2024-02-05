@@ -283,25 +283,19 @@ contains
     type(SysMatrixType), intent(in)    :: M, C, K, Q
     integer            , intent(out)   :: ierr
 
-    integer :: ctrlSysEigFlag
-
     !! --- Logic section ---
 
     call allocEigenMatrices (modes,neq,ierr)
     if (ierr < 0) goto 915
-
-    call ffa_cmdlinearg_getint ('ctrlSysEigFlag',ctrlSysEigFlag)
 
     A = 0.0_dp
     B = 0.0_dp
 
     !! The A matrix
 
-    if (ctrlSysEigFlag > 0) then
-       !! A(1:n,1:n) = Q
-       call convertSysMat (Q,A,neq,1,11,ierr)
-       if (ierr < 0) goto 915
-    end if
+    !! A(1:n,1:n) = Q
+    call convertSysMat (Q,A,neq,1,11,ierr)
+    if (ierr < 0) goto 915
     !! A(n+1:2n,1+n:2n) = K
     call convertSysMat (K,A(:,neq+1:),neq,neq+1,11,ierr)
     if (ierr < 0) goto 915
@@ -798,6 +792,7 @@ contains
     use reportErrorModule  , only : errorFileOnly_p, warning_p, note_p, empty_p
 #ifdef FT_DEBUG
     use SysMatrixTypeModule, only : writeObject
+    use manipMatrixModule  , only : writeObject
     use fileUtilitiesModule, only : getDBGfile
 #endif
 
@@ -844,8 +839,10 @@ contains
        !! Note: If the controller contains non-collocated sensors and actuators,
        !! the matrices will be unsymmetric. However, these will by the existing
        !! code be faulty symmetrizied
-       call csAddEM (sam,pCS%samElNum,pCS%nDofs,pCS%SSEEMat,modes%Qmat,ierr)
-       if (ierr /= 0) goto 915
+       if (modes%solver == 6) then
+          call csAddEM (sam,pCS%samElNum,pCS%nDofs,pCS%SSEEMat,modes%Qmat,ierr)
+          if (ierr /= 0) goto 915
+       end if
        call csAddEM (sam,pCS%samElNum,pCS%nDofs,pCS%stiffMat,modes%Kmat,ierr)
        if (ierr /= 0) goto 915
        call csAddEM (sam,pCS%samElNum,pCS%nDofs,pCS%dampMat,modes%Cmat,ierr)
@@ -866,6 +863,7 @@ contains
        io = getDBGfile(3,'modes.dbg')
        write(io,"(/'=== Eigenvalue analysis at time =',1pe12.5)") sys%time
        write(io,"('TolEigval, TolFactor, TolEigvec =',1p3e12.5)") modes%tol
+       call writeObject (modes%Qmat,io,'Qmat in Eigenvalue analysis')
        call writeObject (modes%Kmat,io,'Kmat in Eigenvalue analysis')
        call writeObject (modes%Cmat,io,'Cmat in Eigenvalue analysis')
        call writeObject (modes%Mmat,io,'Mmat in Eigenvalue analysis')
@@ -886,7 +884,6 @@ contains
 
     call startTimer (eig_p)
 
-    io = getErrorFile()
     if (modes%solver <= 2) then
 
        call allocEigenMatrices (modes,sam%neq,ierr)
@@ -902,6 +899,7 @@ contains
        else
           mip(6) = 1
        end if
+       io = getErrorFile()
        call csLanczosEigenSolve (modes%Kmat, modes%Mmat, MIP, MOP, sam%meqn, &
             &                    neqEig, modes%nModes, modes%nModes, &
             &                    modes%tol, modes%shift, alphaR, modes%eqVec, &
@@ -969,6 +967,12 @@ contains
           call stopTimer (eig_p)
           goto 915
        end if
+#ifdef FT_DEBUG
+       if (iprint == -99 .and. size(A,1) <= 10) then
+          call writeObject (A,io,'Resulting A-matrix',10)
+          call writeObject (B,io,'Resulting B-matrix',10)
+       end if
+#endif
 
        !! Solve the generalized eigenvalue problem using LAPACK
        call DGGEVX ('B','N','V','B', &
@@ -983,7 +987,16 @@ contains
           call stopTimer (eig_p)
           goto 915
        end if
+#ifdef FT_DEBUG
+       if (iprint == -99) then
+          write(io,"(/'Mode   alphaR       alphaI         beta')")
+          do j = 1, N
+             write(io,"(I4,1P3E13.5)") j, alphaR(j), alphaI(j), beta(j)
+          end do
+       end if
+#endif
 
+       io = getErrorFile()
        if (complexModes) then
 
           !! Extract complex eigenvalues and expand the associated eigenvectors
@@ -1041,6 +1054,7 @@ contains
        end if
 
        !! Extract real eigenvalues and expand the associated eigenvectors
+       io = getErrorFile()
        call findRealEigenValues (sam,modes,normFactors,modeOrder, &
             &                    iprint,io,ierr)
 
