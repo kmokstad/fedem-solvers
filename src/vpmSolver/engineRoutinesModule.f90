@@ -431,6 +431,82 @@ contains
 
 
   !!============================================================================
+  !> @brief Calculates gradient of a control input w.r.t. displacement DOFs.
+  !>
+  !> @param[in] cParam The control input to evaluate the gradient for
+  !> @param[out] sGrad The calculated gradient w.r.t. displacement DOFs
+  !> @param[out] ierr Error flag
+  !>
+  !> @callgraph @callergraph
+  !>
+  !> @author Bjorn Haugen
+  !>
+  !> @date 28 Jun 2009
+
+  subroutine SensorGradient (cParam,sGrad,ierr)
+
+    use ControlTypeModule, only : CtrlPrm, getSensor
+    use SensorTypeModule , only : SensorType, sensorType_p, dp
+    use SensorTypeModule , only : TRIAD_p, RELATIVE_TRIAD_p, JOINT_VARIABLE_p
+    use SensorTypeModule , only : LOCAL_p, GLOBAL_p
+    use reportErrorModule, only : internalError, reportError, debugFileOnly_p
+
+    type(CtrlPrm), intent(in)  :: cParam
+    real(dp)     , intent(out) :: sGrad(:)
+    integer      , intent(out) :: ierr
+
+    !! Local variables
+    real(dp)                  :: eGrad
+    type(SensorType), pointer :: sensor
+
+    !! --- Logic section ---
+
+    ierr  = 0
+    sGrad = 0.0_dp
+    sensor => getSensor(cParam)
+    if (.not. associated(sensor)) then
+       ierr = -1
+    else if (associated(cParam%engine)) then
+       eGrad = EngineRate(cParam%engine,ierr,sensor%value)
+    else
+       eGrad = 1.0_dp
+    end if
+    if (ierr < 0) then
+       call reportError (debugFileOnly_p,'SensorGradient')
+       return
+    end if
+
+    select case (sensor%type)
+    case (TRIAD_p)
+
+       select case (sensor%system)
+       case (LOCAL_p)
+          sGrad(sensor%dof) = eGrad
+       case (GLOBAL_p)
+          if (sensor%dof > 3) then
+             sGrad(4:6) = eGrad * triads(sensor%index)%ur(:,sensor%dof-3)
+          else
+             sGrad(1:3) = eGrad * triads(sensor%index)%ur(:,sensor%dof)
+          end if
+       end select
+
+    case (RELATIVE_TRIAD_p)
+
+       ierr = internalError('SensorGradient: Not yet done for RELATIVE_TRIAD')
+
+    case (JOINT_VARIABLE_p)
+
+       sGrad(sensor%dof) = eGrad
+
+    case default
+       ierr = internalError('SensorGradient: Unsupported sensor type '// &
+            &               sensorType_p(sensor%type))
+    end select
+
+  end subroutine SensorGradient
+
+
+  !!============================================================================
   !> @brief Evaluates the argument(s) of a general function.
   !>
   !> @param args The function arguments to evaluate

@@ -70,7 +70,7 @@ contains
   !!============================================================================
   !> @brief Iterates the control module.
 
-  subroutine IterateControlSystem (sys,ctrl,MODE,MSIM,IERR)
+  subroutine IterateControlSystem (sys,ctrl,MODE,MSIM,IERR,setInput)
 
     use ControlTypeModule, only : ControlType
     use SystemTypeModule , only : SystemType
@@ -89,6 +89,7 @@ contains
     type(ControlType), intent(inout) :: ctrl
     integer          , intent(in)    :: MODE, MSIM(:)
     integer          , intent(out)   :: IERR
+    logical, optional, intent(in)    :: setInput
 
     !! Local variables
     integer  :: IPRINT, IOP, NDDIM, ISTAT(10), IAERR(2)
@@ -103,7 +104,11 @@ contains
     call startTimer (ctrl_p)
 
     !! Establish the VREG vector with sensor and engine input
-    call SetControlInput (ctrl,ierr)
+    if (.not. present(setInput)) then
+       call SetControlInput (ctrl,ierr)
+    else if (setInput) then
+       call SetControlInput (ctrl,ierr)
+    end if
     if (ierr < 0) goto 900
 
     if (MSIM(48) < 1) goto 900 ! No control elements

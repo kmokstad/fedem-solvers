@@ -67,9 +67,10 @@ contains
     end if
 
     if (present(neq)) then
-       if (modes%solver == 4) then
-          if (N == 2*neq) return
-          N = 2*neq
+       if (modes%solver == 4 .or. modes%solver == 6) then
+          idum = modes%solver/2
+          if (N == idum*neq) return
+          N = idum*neq
        else
           if (N == neq) return
           N = neq
@@ -110,7 +111,7 @@ contains
        if (jerr /= 0) goto 915
        return
 
-    else if (modes%solver == 4) then
+    else if (modes%solver == 4 .or. modes%solver == 6) then
 
        allocate(V(N,N),stat=jerr)
        if (jerr /= 0) goto 915
@@ -123,7 +124,7 @@ contains
 
     end if
 
-    if (modes%solver <= 4) then
+    if (modes%solver <= 4 .or. modes%solver == 6) then
        allocate(alphaR(N),alphaI(N),A(N,N),B(N,N),beta(N),indx(N), &
             &   Lscale(N),Rscale(N),rcondE(N),rcondV(N), &
             &   Iwork(N+6),Bwork(N),stat=jerr)
@@ -133,7 +134,7 @@ contains
     if (jerr /= 0) goto 915
 
     Lwork = -1 ! Find the optimal size of the scratch array Lwork
-    if (modes%solver <= 4) then
+    if (modes%solver <= 4 .or. modes%solver == 6) then
        call DGGEVX ('B','N','V','B', &
             &       N,A(1,1),N,B(1,1),N,alphaR(1),alphaI(1),beta(1), &
             &       V(1,1),N,V(1,1),N,idum,idum,Lscale(1),Rscale(1),rdum,rdum, &
@@ -235,6 +236,104 @@ contains
 915 call reportError (debugFileOnly_p,'fillEigenSystem')
 
   end subroutine fillEigenSystem
+
+
+  !!============================================================================
+  !> @brief Builds the full matrices of the generalized eigenvalue problem.
+  !>
+  !> @param modes Eigenmode data container
+  !> @param[in] neq Number of equations, i.e., dimension of system matrices
+  !> @param[in] M System mass matrix
+  !> @param[in] C System damping matrix
+  !> @param[in] K System stiffness matrix
+  !> @param[in] Q System steady-state error elimination matrix
+  !> @param[out] ierr Error flag
+  !>
+  !> @details The generalized eigenvalue problem in 3n state-space form reads
+  !>          @b A @b z = &lambda; @b B @b z
+  !>
+  !> with damping and steady-state error elimination, this is
+  !>
+  !>          | Q  0  0 |*{z} = lambda * | -K -C -M |*{z}
+  !>          | 0  K  0 |                |  K  0  0 |
+  !>          | 0  0  M |                |  0  M  0 |
+  !>
+  !> @note This method does not work quite yet.
+  !> No eigenvalues are obtained for unknown reasons.
+  !> However, the @b A and @b B matrices seems to be correct.
+  !> The method has been proven valid in MATLAB.
+  !> But the @b A and @b B matrices obtained through this code yield
+  !> the same eigenvalue results in MATLAB.
+  !> Can it be due to singular or very sparse matrices?
+  !>
+  !> @callgraph @callergraph
+  !>
+  !> @author Magne Bratland
+  !>
+  !> @date 8 Oct 2010
+
+  subroutine fillEigenSystem3nStSp (modes,neq,M,C,K,Q,ierr)
+
+    use ModesTypeModule    , only : ModesType
+    use SysMatrixTypeModule, only : SysMatrixType, convertSysMat, writeObject
+    use reportErrorModule  , only : reportError, debugFileOnly_p
+
+    type(ModesType)    , intent(inout) :: modes
+    integer            , intent(in)    :: neq
+    type(SysMatrixType), intent(inout) :: M, C, K, Q
+    integer            , intent(out)   :: ierr
+
+    integer :: ctrlSysEigFlag
+    integer :: mpar(3)
+
+    !! --- Logic section ---
+
+    call writeObject (M,mpar,123,'M',complexity=-1)
+    call writeObject (C,mpar,124,'C',complexity=-1)
+    call writeObject (K,mpar,125,'K',complexity=-1)
+    call writeObject (Q,mpar,126,'Q',complexity=-1)
+
+    call allocEigenMatrices (modes,neq,ierr)
+    if (ierr < 0) goto 915
+
+    call ffa_cmdlinearg_getint ('ctrlSysEigFlag',ctrlSysEigFlag)
+
+    A = 0.0_dp
+    B = 0.0_dp
+
+    !! The A matrix
+
+    if (ctrlSysEigFlag > 0) then
+       !! A(1:n,1:n) = Q
+       call convertSysMat (Q,A,neq,1,11,ierr)
+       if (ierr < 0) goto 915
+    end if
+    !! A(n+1:2n,1+n:2n) = K
+    call convertSysMat (K,A(:,neq+1:),neq,neq+1,11,ierr)
+    if (ierr < 0) goto 915
+    !! A(2n+1:3n,2n+1:3n) = M
+    call convertSysMat (M,A(:,2*neq+1:),neq,2*neq+1,11,ierr)
+    if (ierr < 0) goto 915
+
+    !! The B matrix
+
+    !! B(1:n,1:n) = -K
+    B(1:neq,1:neq) = -A(neq+1:2*neq,neq+1:2*neq)
+    !! B(n+1:2n,1:n) = K
+    B(neq+1:2*neq,1:neq) = A(neq+1:2*neq,neq+1:2*neq)
+    !! B(1:n,n+1:2n) = -C
+    call convertSysMat (C,B(:,neq+1:),neq,1,-11,ierr)
+    if (ierr < 0) goto 915
+    !! B(2n+1:3n,n+1:2n) = M
+    B(2*neq+1:3*neq,neq+1:2*neq) = A(2*neq+1:3*neq,2*neq+1:3*neq)
+    !! B(1:n,2n+1:3n) = -M
+    B(1:neq,2*neq+1:3*neq) = -A(2*neq+1:3*neq,2*neq+1:3*neq)
+
+    return
+
+915 call reportError (debugFileOnly_p,'fillEigenSystem3nStSp')
+
+  end subroutine fillEigenSystem3nStSp
 
 
   !!============================================================================
@@ -397,12 +496,24 @@ contains
     integer        , intent(out)   :: ierr
 
     !! Local variables
-    integer  :: i, j, k, l, nmod
+    integer  :: i, j, k, l, nmod, ndof, dof1, dof2
     real(dp) :: cr, ci, wmax
 
     real(dp), parameter :: overdamped = 10.0_dp
 
     !! --- Logic section ---
+
+    !! To whom it may concern:
+    !! From explanation of DGGEVX routine
+    !! Note:   the   quotients   ALPHAR(j)/BETA(j)    and
+    !! ALPHAI(j)/BETA(j)  may  easily over- or underflow,
+    !! and BETA(j) may even  be  zero.   Thus,  the  user
+    !! should   avoid   naively   computing   the   ratio
+    !! ALPHA/BETA. However, ALPHAR  and  ALPHAI  will  be
+    !! always  less  than  and  usually  comparable  with
+    !! norm(A) in magnitude, and BETA  always  less  than
+    !! and usually comparable with norm(B).
+    !! Magne Bratland, 15 Nov 2010.
 
     ierr = 0
     wmax = 1.0_dp
@@ -424,6 +535,22 @@ contains
     !! Sort the modes in ascending order of eigenfrequency
     call bubbelSort (work,indx)
 
+    if (modes%solver == 6) then
+       !! Using the 3n state-space solution.
+       !! This method will yield at least one purely real eigenvalue
+       !! in addition to the solution of the 2n state-space method.
+       !! The purely real eigenvalue can be discarded.
+       !! Should there be a note about when the real value are positive,
+       !! that the system is unstable, perhaps?
+       ndof = N/3
+       dof1 = ndof+1
+       dof2 = ndof*2
+    else
+       ndof = N/2
+       dof1 = 1
+       dof2 = ndof
+    end if
+
     k = 0
     nmod = 0
     do i = 1, N
@@ -443,21 +570,27 @@ contains
 
           !! Real eigenvalue
           if (nmod == size(modes%ReVal)) return
-          if (modes%ReVal(nmod+1) < -overdamped) then
+
+          if (modes%solver == 6) then
+             if (modes%ImVal(nmod+1) <= 0.0_dp) then
+                write(io,*) ' ** Ignoring purely real mode', &
+                     &      j,modes%ReVal(nmod+1),rcondE(j),rcondV(j)
+             end if
+          else if (modes%ReVal(nmod+1) < -overdamped) then
              write(io,*) ' ** Ignoring overdamped real mode', &
                   &      j,modes%ReVal(nmod+1),rcondE(j),rcondV(j)
           else
              nmod = nmod + 1
-             call csTransform (modes%Mmat,V(1:N/2,j),cr,ierr)
+             call csTransform (modes%Mmat,V(1:ndof,j),cr,ierr)
              if (ierr /= 0) goto 915
              wmax = 1.0_dp/sqrt(cr)
-             call csExpand (sam,V(1:N/2,j),modes%ReVec(:,nmod),wmax,0.0_dp)
+             call csExpand (sam,V(1:ndof,j),modes%ReVec(:,nmod),wmax,0.0_dp)
              modes%ImVec(:,nmod) = 0.0_dp
              if (iprint > 0) then
                 write(io,6000) nmod, 1.0_dp, &
                      &        -modes%ReVal(nmod)*2.0_dp, &
                      &         modes%ReVal(nmod)**2.0_dp, &
-                     &         rcondE(j),rcondV(j)
+                     &         rcondE(j), rcondV(j)
              end if
           end if
           k = 0
@@ -468,18 +601,18 @@ contains
           if (nmod == size(modes%ReVal)) return
           l = indx(i+1)
           nmod = nmod + 1
-          call csTransform (modes%Mmat,V(1:N/2,j),cr,ierr)
+          call csTransform (modes%Mmat,V(dof1:dof2,j),cr,ierr)
           if (ierr /= 0) goto 915
-          call csTransform (modes%Mmat,V(1:N/2,l),ci,ierr)
+          call csTransform (modes%Mmat,V(dof1:dof2,l),ci,ierr)
           if (ierr /= 0) goto 915
           wmax = 1.0_dp/sqrt(cr+ci)
-          call csExpand (sam,V(1:N/2,j),modes%ReVec(:,nmod),wmax,0.0_dp)
-          call csExpand (sam,V(1:N/2,l),modes%ImVec(:,nmod),wmax,0.0_dp)
+          call csExpand (sam,V(dof1:dof2,j),modes%ReVec(:,nmod),wmax,0.0_dp)
+          call csExpand (sam,V(dof1:dof2,l),modes%ImVec(:,nmod),wmax,0.0_dp)
           if (iprint > 0) then
              write(io,6000) nmod, 1.0_dp, &
                   &     -modes%ReVal(nmod)*2.0_dp, &
                   &      modes%ReVal(nmod)**2.0_dp + modes%ImVal(nmod)**2.0_dp,&
-                  &      rcondE(j),rcondV(j)
+                  &      rcondE(j), rcondV(j)
           end if
 
        else if (modes%ImVal(nmod) < 0.0_dp) then
@@ -543,6 +676,7 @@ contains
     case (2) ; write(IO,1001) 'SAM::LANCZ2'
     case(3:4); write(IO,1001) 'LAPACK::DGGEVX'
     case (5) ; write(IO,1001) 'LAPACK::DSYGVX'
+    case (6) ; write(IO,1001) 'LAPACK::DGGEVX'
     end select
 
     !! Write eigenvalues
@@ -555,7 +689,7 @@ contains
        write(IO,1005) (modes%ReVal(I)*scale,I=1,modes%nModes)
     end if
 
-    if (modes%solver /= 4 .and. associated(modes%effMass)) then
+    if (associated(modes%effMass)) then
 
        !! Write effective modal masses
        effMass = 0.0_dp
@@ -603,7 +737,7 @@ contains
 1000 format(/130('*')/3X,'EIGENVALUE ANALYSIS AT TIME (S):',1PE12.5)
 1001 format(130('*')///3X,'EIGENFREQUENCIES [Hz] (using ',A,') :')
 1002 format(/5(3X,'LAMBDA & EIGFREQ',I2,4X),' ....'/)
-1003 format(1P,5(1X,2D11.4,'  '))
+1003 format(1P,5(1X,2E11.4,'  '))
 1004 format(/10(2X,'EIGFREQ',I2,2X)/)
 1005 format(1P,10E13.5)
 
@@ -631,6 +765,8 @@ contains
   !> @param modes Eigenmode data
   !> @param sys System level model data
   !> @param mech Mechanism components of the model
+  !> @param[in] ctrl Control system data
+  !> @param pCS Data for coupled control system and structure modal analysis
   !> @param[in] iprint Print switch for additional output
   !> @param[out] ierr Error flag
   !>
@@ -643,17 +779,22 @@ contains
   !> - 3 : Use LAPACK::DGGEVX (undamped system)
   !> - 4 : Use LAPACK::DGGEVX (damped system)
   !> - 5 : Use LAPACK::DSYGVX (symmetric system)
+  !> - 6 : Use LAPACK::DGGEVX (3n state-space form)
   !>
   !> @callgraph @callergraph
 
-  subroutine eigenModes (sam,modes,sys,mech,iprint,ierr)
+  subroutine eigenModes (sam,modes,sys,mech,ctrl,pCS,iprint,ierr)
 
     use sprKindModule      , only : ik
     use SamModule          , only : SamType
     use ModesTypeModule    , only : ModesType
     use SystemTypeModule   , only : SystemType
     use MechanismTypeModule, only : MechanismType
+    use ControlTypeModule  , only : ControlType
+    use ControlStructModule, only : ControlStructType
+    use ControlStructModule, only : BuildStructControlJacobi
     use TriadTypeModule    , only : hasLocalDirections, transSysToGlob
+    use AsmExtensionModule , only : csAddEM
     use SolExtensionModule , only : csLanczosEigenSolve, csExpand
     use MatExtensionModule , only : csTransform, csCopyMat
     use AddInSysModule     , only : BuildStiffMat, BuildDamperMat, BuildMassMat
@@ -670,11 +811,13 @@ contains
     type(ModesType)     , intent(inout) :: modes
     type(SystemType)    , intent(inout) :: sys
     type(MechanismType) , intent(inout) :: mech
+    type(ControlType)   , intent(inout) :: ctrl
+    type(ControlStructType), pointer    :: pCS
     integer             , intent(in)    :: iprint
     integer             , intent(out)   :: ierr
 
     !! Local variables
-    logical               :: mIsDestroyed
+    logical               :: complexModes, mIsDestroyed
     integer               :: i, idof, ldof, io, j, mop(10), neqEig
     integer(ik)           :: meqErr(2)
     real(dp)              :: Abnorm, Bbnorm
@@ -688,6 +831,8 @@ contains
 
     !! --- Logic section ---
 
+    complexModes = modes%solver == 4 .or. modes%solver == 6
+
     call BuildStiffMat (modes%Kmat,mech,sam,iter,modes%stressStiffIsOn, &
          &              zeroStressStiffUpdateSkip,ierr)
     if (ierr /= 0) goto 915
@@ -697,6 +842,23 @@ contains
 
     call BuildMassMat (modes%Mmat,mech,sam,ierr)
     if (ierr /= 0) goto 915
+
+    if (associated(pCS)) then
+       !! Call routine for df/dx for controller
+       call BuildStructControlJacobi (pCS,ctrl,sys,sam%mpar,ierr)
+       if (ierr /= 0) goto 915
+       !! Note: If the controller contains non-collocated sensors and actuators,
+       !! the matrices will be unsymmetric. However, these will by the existing
+       !! code be faulty symmetrizied
+       call csAddEM (sam,pCS%samElNum,pCS%nDofs,pCS%SSEEMat,modes%Qmat,ierr)
+       if (ierr /= 0) goto 915
+       call csAddEM (sam,pCS%samElNum,pCS%nDofs,pCS%stiffMat,modes%Kmat,ierr)
+       if (ierr /= 0) goto 915
+       call csAddEM (sam,pCS%samElNum,pCS%nDofs,pCS%dampMat,modes%Cmat,ierr)
+       if (ierr /= 0) goto 915
+       call csAddEM (sam,pCS%samElNum,pCS%nDofs,pCS%massMat,modes%Mmat,ierr)
+       if (ierr /= 0) goto 915
+    end if
 
     !! Make a copy of the mass matrix since csLanczosEigenSolve may destroy it
     mIsDestroyed = modes%solver==1 .or. (modes%solver<3 .and. modes%factorMass)
@@ -799,10 +961,16 @@ contains
           ierr = 0
        end if
 
-    else if (modes%solver <= 4) then
+    else if (modes%solver == 3 .or. complexModes) then
 
        !! Establish the first-order non-symmetric generalized eigenvalue problem
-       call fillEigenSystem (modes,neqEig,modes%Mmat,modes%Cmat,modes%Kmat,ierr)
+       if (modes%solver == 6) then
+          call fillEigenSystem3nStSp (modes,neqEig,modes%Mmat, &
+               &                      modes%Cmat,modes%Kmat,modes%Qmat,ierr)
+       else
+          call fillEigenSystem (modes,neqEig,modes%Mmat, &
+               &                modes%Cmat,modes%Kmat,ierr)
+       end if
        if (ierr /= 0) then
           call stopTimer (eig_p)
           goto 915
@@ -822,7 +990,7 @@ contains
           goto 915
        end if
 
-       if (modes%solver == 4) then
+       if (complexModes) then
 
           !! Extract complex eigenvalues and expand the associated eigenvectors
           call findEigenValues (sam,modes,iprint,io,ierr)
@@ -889,7 +1057,7 @@ contains
 
     !! Compute the damping ratios for each eigenmode
     do j = 1, modes%nModes
-       if (modes%solver == 4) then
+       if (complexModes) then
           modes%dampRat(j) = -modes%ReVal(j)*2.0_dp
        else if (modes%solver >= 3) then
           call csTransform (modes%Cmat,V(:,modeOrder(j)),modes%dampRat(j),ierr)
@@ -912,14 +1080,14 @@ contains
        ldof = idof + mech%triads(i)%nDOFs-1
        do j = 1, modes%nModes
           call transSysToGlob (mech%triads(i),modes%ReVec(idof:ldof,j))
-          if (modes%solver == 4) then
+          if (complexModes) then
              call transSysToGlob (mech%triads(i),modes%ImVec(idof:ldof,j))
           end if
        end do
 
     end do
 
-    if (modes%solver /= 4 .and. associated(modes%effMass)) then
+    if (associated(modes%effMass)) then
        !! Restore the unfactored mass matrix, if needed
        if (mIsDestroyed) then
           call csCopyMat (modes%Mmat,sys%Nmat,ierr)
@@ -1067,10 +1235,11 @@ contains
        end do
     end do
 
-    deallocate(R_mat, eig, modal_part)
+900 deallocate(R_mat, eig, modal_part)
     return
 
 915 call reportError (debugFileOnly_p,'modalMasses')
+    goto 900
 
   end subroutine modalMasses
 

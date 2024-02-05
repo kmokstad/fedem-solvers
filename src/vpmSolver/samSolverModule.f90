@@ -234,6 +234,7 @@ contains
   !> @param uElems All user-defined elements in the model
   !> @param masses All masses in the model
   !> @param tires All tires in the model
+  !> @param ctrlStructEl Data for coupled control system modal analysis
   !> @param mpar Matrix of parameters
   !> @param[out] mmnpc Matrix of nodal point correspondances
   !> @param[out] mpmnpc Matrix of pointers to MNPCs
@@ -246,11 +247,13 @@ contains
   !> @callergraph
   !>
   !> @author Knut Morten Okstad
-  !>
   !> @date 21 Jul 2000
+  !>
+  !> @author Magne Bratland
+  !> @date 29 Apr 2009
 
   subroutine initSAM_topology (sups,springs,dampers,joints, &
-       &                       bElems,cElems,uElems,masses,tires, &
+       &                       bElems,cElems,uElems,masses,tires,ctrlStructEl, &
        &                       mpar,mmnpc,mpmnpc,ierr)
 
     use SupElTypeModule           , only : SupElType
@@ -262,6 +265,7 @@ contains
     use UserdefElTypeModule       , only : UserdefElType
     use MassTypeModule            , only : MassType
     use TireTypeModule            , only : TireType
+    use ControlStructModule       , only : ControlStructType
     use MasterSlaveJointTypeModule, only : getJointId, GetPtrToOwner
     use allocationModule          , only : reAllocate
     use reportErrorModule         , only : AllocationError
@@ -276,6 +280,7 @@ contains
     type(UserdefElType)       , intent(inout) :: uElems(:)
     type(MassType)            , intent(inout) :: masses(:)
     type(TireType)            , intent(inout) :: tires(:)
+    type(ControlStructType)   , pointer       :: ctrlStructEl
     integer                   , intent(inout) :: mpar(:)
     integer                   , pointer       :: mmnpc(:), mpmnpc(:)
     integer                   , intent(out)   :: ierr
@@ -349,6 +354,12 @@ contains
           nnpc = nnpc + 1
        end if
     end do
+
+    !! Add control structure interaction as an element, if it exists
+    if (associated(ctrlStructEl)) then
+       nels = nels + 1
+       nnpc = nnpc + size(ctrlStructEl%samMNPC)
+    end if
 
     mpar(2)  = nels
     mpar(15) = nnpc
@@ -525,6 +536,17 @@ contains
        isUsed(tires(idIn)%RimTriad%samNodNum) = .true.
        mpmnpc(nels+1) = mpmnpc(nels) + nnpc
     end do
+
+    !! Control structure interaction (for eigenvalue analysis, primarily)
+    if (associated(ctrlStructEl)) then
+       nels = nels + 1
+       ctrlStructEl%samElNum = nels
+       nnpc = size(ctrlStructEl%samMNPC)
+       do i = 1, nnpc
+          mmnpc(mpmnpc(nels)+i-1) = ctrlStructEl%samMNPC(i)
+       end do
+       mpmnpc(nels+1) = mpmnpc(nels) + nnpc
+    end if
 
     !! Consistency check: All dependent nodes must be connected to something
     if (count(isUsed) < mpar(1)) then
