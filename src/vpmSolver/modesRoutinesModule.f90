@@ -23,7 +23,7 @@ module ModesRoutinesModule
   private
 
   !> @cond NO_DOCUMENTATION
-  !! Internal work arrays (undocumented)
+  !! Internal work arrays for LAPACK eigensolver (undocumented)
   integer , save              :: Lwork = 0, N = 0
   integer , save, allocatable :: indx(:), Iwork(:)
   logical , save, allocatable :: Bwork(:)
@@ -748,7 +748,7 @@ contains
 
 
   !!============================================================================
-  !> @brief Calculate damped or undamped eigenvalues and eigenvectors.
+  !> @brief Calculates damped or undamped eigenvalues and eigenvectors.
   !>
   !> @param[in] sam Data for managing system matrix assembly
   !> @param modes Eigenmode data
@@ -1151,7 +1151,7 @@ contains
   !> mass-normalized, [M] is the compact mass matrix, and [R] is the influence
   !> matrix representing a rigid body unit displacement of the mechanism.
   !> Finally, [M_eff] is a nModes&times;6 matrix of the effective modal masses.
-  !> The results are stored in modestypemodule::modestype::effmass.
+  !> The results are stored in the array modestypemodule::modestype::effmass.
   !>
   !> @todo It works now for LANCZ2 and for the -undamped solvers (although I
   !> encountered something that looks like a bug in the -undamped calculation of
@@ -1173,13 +1173,11 @@ contains
 
   subroutine modalMasses (sups,modes,sam,eigVectors,normFactors,modeOrder,ierr)
 
-    use SamModule                 , only : SamType
-    use ModesTypeModule           , only : ModesType
-    use SupElTypeModule           , only : SupElType
-    use MatExtensionModule        , only : csPremult
-    use MassMatrixCorrectionModule, only : mmcRigAccelVectors
-    use reportErrorModule         , only : allocationError
-    use reportErrorModule         , only : reportError, debugFileOnly_p
+    use SamModule         , only : SamType
+    use ModesTypeModule   , only : ModesType
+    use SupElTypeModule   , only : SupElType
+    use MatExtensionModule, only : csPremult
+    use reportErrorModule , only : allocationError, reportError, debugFileOnly_p
 
     type(SupElType), intent(in)    :: sups(:)
     type(ModesType), intent(inout) :: modes
@@ -1190,13 +1188,11 @@ contains
 
     !! Local variables
     integer               :: i, imod
-    real(dp)              :: Center(3)
-    real(dp), allocatable :: R_mat(:,:), R(:,:)
-    real(dp), allocatable :: eig(:,:), modal_part(:,:)
+    real(dp), allocatable :: ttcc_0(:), R_mat(:,:), eig(:,:), modal_part(:,:)
 
     !! --- Logic Section ---
 
-    allocate(R_mat(sam%neq,6), &
+    allocate(ttcc_0(sam%nmmceq), R_mat(sam%neq,6), &
          &   eig(sam%neq,modes%nModes), modal_part(modes%nModes,6), stat=ierr)
     if (ierr /= 0) then
        ierr = allocationError('modalMasses')
@@ -1204,6 +1200,17 @@ contains
     end if
 
     R_mat = 0.0_dp
+
+    !! Check if there are any joints that are not attached to ground.
+    !! If so, the factors in TTCC should be set to zero in order to keep
+    !! the joint rigid while establishing the unit displacement vectors.
+    ttcc_0 = sam%ttcc
+    do i = 1, sam%nceq
+       if (sam%mpmceq(i+1)-sam%mpmceq(i) > 7) then
+          !! The joint is not connected to ground
+          ttcc_0(sam%mpmceq(i)+1:sam%mpmceq(i+1)-1) = 0.0_dp
+       end if
+    end do
 
     !! (1) Keep the eigenvectors on equation form, but scale them
     !! (for modes%solver = 3) to keep things mass-normalized
@@ -1218,17 +1225,8 @@ contains
     !! (2) Establish the influence vectors in all 6 directions
     !! These are the vectors that represent the displacement of the masses
     !! resulting from static application of a unit ground displacement
-    ! --- Establish rigid body acceleration vectors about global origin
-    Center = 0.0_dp
     do i = 1, size(sups)
-       allocate(R(sups(i)%nTotDofs,6),stat=ierr)
-       if (ierr /= 0) then
-          ierr = allocationError('modalMasses')
-          return
-       end if
-       call mmcRigAccelVectors (sups(i), Center, R)
-       call addUnitDisplVector (sam, sups(i)%samElNum, R, R_mat, ierr)
-       deallocate(R)
+       call addUnitDisplVector (sam, sups(i), ttcc_0, R_mat, ierr)
        if (ierr /= 0) goto 915
     end do
 
@@ -1249,7 +1247,7 @@ contains
        end do
     end do
 
-900 deallocate(R_mat, eig, modal_part)
+900 deallocate(R_mat, ttcc_0, eig, modal_part)
     return
 
 915 call reportError (debugFileOnly_p,'modalMasses')
@@ -1259,64 +1257,59 @@ contains
 
 
   !!============================================================================
-  !> @brief Adds an element unit displacement vector into the system vector.
+  !> @brief Adds a superelement unit displacement vector into the system vector.
   !>
   !> @param[in] samData Data for managing system matrix assembly
-  !> @param[in] iel Element index
-  !> @param[in] eV Element displacement vector
+  !> @param[in] sup The superelement to add unit displacement vector for
+  !> @param[in] ttcc_0 Modified table of constraint equation coefficients
   !> @param sysV System displacement vector
   !> @param[out] ierr Error flag
   !>
-  !> @callergraph
+  !> @callgraph @callergraph
   !>
   !> @author Leif Ivar Myklebust
   !>
   !> @date 2 Jul 2003
 
-  subroutine addUnitDisplVector (samData,iel,eV,sysV,ierr)
+  subroutine addUnitDisplVector (samData,sup,ttcc_0,sysV,ierr)
 
-    use SamModule        , only : SamType
-    use reportErrorModule, only : allocationError, getErrorFile
-    use reportErrorModule, only : reportError, debugFileOnly_p
+    use SamModule                 , only : SamType
+    use SupElTypeModule           , only : SupElType
+    use MassMatrixCorrectionModule, only : mmcRigAccelVectors
+    use reportErrorModule         , only : allocationError, getErrorFile
+    use reportErrorModule         , only : reportError, debugFileOnly_p
 
-    type(SamType), intent(in)    :: samData
-    integer      , intent(in)    :: iel
-    real(dp)     , intent(in)    :: eV(:,:)
-    real(dp)     , intent(inout) :: sysV(:,:)
-    integer      , intent(out)   :: ierr
+    type(SamType)  , intent(in)    :: samData
+    type(SupElType), intent(in)    :: sup
+    real(dp)       , intent(in)    :: ttcc_0(:)
+    real(dp)       , intent(inout) :: sysV(:,:)
+    integer        , intent(out)   :: ierr
 
     !! Local variables
-    integer               :: i, k, nedof
     real(dp), parameter   :: eps_p = 1.0e-16_dp
-    real(dp), allocatable :: ttcc_0(:), meen(:), sysV_temp(:)
+    real(dp), parameter   :: Center(3) = (/ 0.0_dp, 0.0_dp, 0.0_dp /)
+    integer               :: i, k
+    integer , allocatable :: meen(:)
+    real(dp), allocatable :: R(:,:), sysV_temp(:)
 
     !! --- Logic section ---
 
-    nedof = size(eV,1)
-    allocate(ttcc_0(samData%nmmceq),meen(nedof), &
-         &   sysV_temp(samdata%neq),stat=ierr)
+    allocate(meen(sup%nTotDofs), R(sup%nTotDofs,6), &
+         &   sysV_temp(samdata%neq), stat=ierr)
     if (ierr /= 0) then
        ierr = allocationError('addUnitDisplVector')
        return
     end if
 
-    !! Check if there are any joints that are not attached to ground.
-    !! If so, the factors in TTCC should be set to zero in order to keep
-    !! the joint rigid while establishing the unit displacement vectors.
-    ttcc_0 = samData%ttcc
-    do i = 1, samData%nceq
-       if (samData%mpmceq(i+1)-samData%mpmceq(i) > 7) then
-          !! The joint is not connected to gnd
-          ttcc_0(samData%mpmceq(i)+1:samData%mpmceq(i+1)-1) = 0.0_dp
-       end if
-    end do
+    !! Establish rigid body acceleration vectors about global origin
+    call mmcRigAccelVectors (sup, Center, R)
 
-    do k = 1, 6 ! Loop through all XYZ Rxyz directions
+    do k = 1, 6 ! Loop through all directions TX TY TZ RX RY RZ
        sysV_temp = sysV(:,k)
-       call ADDEV (eV(1,k)         , ttcc_0(1)        , samData%mpar(1)  , &
+       call ADDEV (R(1,k)          , ttcc_0(1)        , samData%mpar(1)  , &
             &      samData%madof(1), samData%meqn(1)  , samData%mpmnpc(1), &
             &      samData%mmnpc(1), samData%mpmceq(1), samData%mmceq(1) , &
-            &      iel             , nedof            , getErrorFile()   , &
+            &      sup%samElNum    , sup%nTotDofs     , getErrorFile()   , &
             &      sysV_temp(1)    , meen(1)          , ierr)
        if (ierr /= 0) exit
 
@@ -1328,7 +1321,7 @@ contains
        end do
     end do
 
-    deallocate(ttcc_0,meen,sysV_temp)
+    deallocate(meen, R, sysV_temp)
 
     if (ierr /= 0) call reportError (debugFileOnly_p,'addUnitDisplVector')
 
@@ -1353,7 +1346,7 @@ contains
   !>
   !> @date 21 Jun 2017
 
-  subroutine exportModes (yamlFile,modelFile,modes,triads,sups,istep,time,ierr)
+  subroutine exportModes (yamlFile,modelFile,modes,triads,sups,iStep,time,ierr)
 
     use KindModule         , only : i8
     use ModesTypeModule    , only : ModesType
@@ -1477,11 +1470,11 @@ contains
   !> @param[in] iStep Time increment counter
   !> @param[in] time Current simulation time
   !>
-  !> @callgraph @callergraph
+  !> @callergraph
   !>
   !> @author Knut Morten Okstad
   !>
-  !> @date/rev 21 Jun 2017
+  !> @date 21 Jun 2017
 
   subroutine writeYAMLheader (iYaml,prog,modelFile,istep,time)
 
@@ -1585,27 +1578,26 @@ contains
   !>
   !> @param[in] iYaml File unit number of the YAML-file to write
   !> @param sups All superelements in the model
-  !> @param[in] scale Scaling factor for the eigenvector
-  !> @param[in] iDbg File unit number of debug output
+  !> @param[in] eigScale Scaling factor for the eigenvector
+  !> @param[in] iDbg File unit number for debug output
   !> @param[in] ierr Error flag
   !>
   !> @callgraph @callergraph
   !>
   !> @author Knut Morten Okstad
   !>
-  !> @date/rev 21 Jun 2017
+  !> @date 21 Jun 2017
 
-  subroutine writeYAMLforces (iYaml,sups,scale,iDbg,ierr)
+  subroutine writeYAMLforces (iYaml,sups,eigScale,iDbg,ierr)
 
-    use SupElTypeModule  , only : SupElType, IsBeam
+    use SupElTypeModule  , only : SupElType, IsBeam, getSupElId
     use SupElTypeModule  , only : UpdateSupElCorot, BuildFinit
-    use IdTypeModule     , only : getId
     use manipMatrixModule, only : writeObject
     use reportErrorModule, only : reportError, debugFileOnly_p
 
     integer        , intent(in)    :: iYaml, iDbg
     type(SupElType), intent(inout) :: sups(:)
-    real(dp)       , intent(in)    :: scale
+    real(dp)       , intent(in)    :: eigScale
     integer        , intent(out)   :: ierr
 
     !! Local variables
@@ -1614,7 +1606,7 @@ contains
     !! --- Logic section ---
 
     ierr = 0
-    write(iYaml,600) scale
+    write(iYaml,600) eigScale
     do i = 1, size(sups)
        if (IsBeam(sups(i))) then
 
@@ -1632,7 +1624,7 @@ contains
           if (iDbg > 0) then
              write(iDbg,"('')")
              call writeObject (sups(i)%supTr,iDbg, &
-                  'Updated coordinate system for Beam'//trim(getId(sups(i)%id)))
+                  'Updated coordinate system for '//getSupElId(sups(i)))
              call writeObject (sups(i)%finit,iDbg,'Nodal deformations')
              call writeObject (sups(i)%FS,iDbg,'Resulting stiffness forces')
           end if
