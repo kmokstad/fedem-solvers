@@ -485,7 +485,7 @@ contains
 
     !! Local variables
     integer  :: i, j, k, l, nmod, ndof, dof1, dof2
-    real(dp) :: cr, ci, wmax
+    real(dp) :: cr, ci, reVal, imVal, wmax
 
     real(dp), parameter :: overdamped = 10.0_dp
 
@@ -548,8 +548,8 @@ contains
        if (j > N) return
 
        !! Compute the complex eigenvalue
-       modes%ReVal(nmod+1) = alphaR(j)/beta(j)
-       modes%ImVal(nmod+1) = alphaI(j)/beta(j)
+       reVal = alphaR(j)/beta(j)
+       imVal = alphaI(j)/beta(j)
 
        !! Orthogonalize the eigenvectors with respect to the mass matrix
        !! and expand from equation-based to nodal-based ordering
@@ -560,15 +560,15 @@ contains
           if (nmod == size(modes%ReVal)) return
 
           if (modes%solver == 6) then
-             if (modes%ImVal(nmod+1) <= 0.0_dp) then
-                write(io,*) ' ** Ignoring purely real mode', &
-                     &      j,modes%ReVal(nmod+1),rcondE(j),rcondV(j)
-             end if
-          else if (modes%ReVal(nmod+1) < -overdamped) then
-             write(io,*) ' ** Ignoring overdamped real mode', &
-                  &      j,modes%ReVal(nmod+1),rcondE(j),rcondV(j)
+             write(io,"('  ** Ignoring purely real mode',2I6,1P3E13.5)") &
+                  &      i, j, reVal, rcondE(j), rcondV(j)
+          else if (reVal < -overdamped) then
+             write(io,"('  ** Ignoring overdamped real mode',2I6,1P3E13.5)") &
+                  &      i, j, reVal, rcondE(j), rcondV(j)
           else
              nmod = nmod + 1
+             modes%ReVal(nmod) = reVal
+             modes%ImVal(nmod) = imVal
              call csTransform (modes%Mmat,V(1:ndof,j),cr,ierr)
              if (ierr /= 0) goto 915
              wmax = 1.0_dp/sqrt(cr)
@@ -576,9 +576,8 @@ contains
              modes%ImVec(:,nmod) = 0.0_dp
              if (iprint > 0) then
                 write(io,6000) nmod, 1.0_dp, &
-                     &        -modes%ReVal(nmod)*2.0_dp, &
-                     &         modes%ReVal(nmod)**2.0_dp, &
-                     &         rcondE(j),rcondV(j)
+                     &        -reVal*2.0_dp, reVal*reVal, &
+                     &         rcondE(j), rcondV(j)
              end if
           end if
           k = 0
@@ -587,8 +586,11 @@ contains
 
           !! Complex-conjugate eigenvalues
           if (nmod == size(modes%ReVal)) return
+
           l = indx(i+1)
           nmod = nmod + 1
+          modes%ReVal(nmod) = reVal
+          modes%ImVal(nmod) = imVal
           call csTransform (modes%Mmat,V(dof1:dof2,j),cr,ierr)
           if (ierr /= 0) goto 915
           call csTransform (modes%Mmat,V(dof1:dof2,l),ci,ierr)
@@ -598,16 +600,15 @@ contains
           call csExpand (sam,V(dof1:dof2,l),modes%ImVec(:,nmod),wmax,0.0_dp)
           if (iprint > 0) then
              write(io,6000) nmod, 1.0_dp, &
-                  &     -modes%ReVal(nmod)*2.0_dp, &
-                  &      modes%ReVal(nmod)**2.0_dp + modes%ImVal(nmod)**2.0_dp,&
-                  &      rcondE(j),rcondV(j)
+                  &        -reVal*2.0_dp, reVal*reVal + imVal*imVal, &
+                  &         rcondE(j), rcondV(j)
           end if
 
        else if (modes%ImVal(nmod) < 0.0_dp) then
 
           !! Store only the complex mode with positive imaginary eigenvalue
-          modes%ReVal(nmod) = modes%ReVal(nmod+1)
-          modes%ImVal(nmod) = modes%ImVal(nmod+1)
+          modes%ReVal(nmod) = reVal
+          modes%ImVal(nmod) = imVal
           modes%ImVec(:,nmod) = -modes%ImVec(:,nmod)
        end if
 
