@@ -68,15 +68,8 @@ module ControlStructModule
      integer          :: numVregOut      !! number of outputs to read perturbation from, =size(whichVregOut)
      integer, pointer :: whichVregOut(:) !! the vreg indexes which have a structural load vector
 
-     !! SENSOR SIDE
-
-     integer                             :: numStructCtrlParams
-     type(StructSensorGradType), pointer :: structToControlSensors(:)
-
-     !! FORCE SIDE
-
-     integer                             :: numControlForces
-     type(ForceControlGradType), pointer :: controlForces(:)
+     type(StructSensorGradType), pointer :: structSensors(:) !< Sensor side
+     type(ForceControlGradType), pointer :: controlForces(:) !< Force side
 
 
      !! The tangent matrecies
@@ -150,23 +143,26 @@ contains
     integer, allocatable :: iCout_from_allVreg(:)
     integer, pointer     :: tmpIdx(:)
 
-    integer :: i, n, iCin, iCout, iSAM, nElNodes, iStart, whichVreg
+    integer :: i, n, iCin, iCout, iSAM, nElNodes, whichVreg
+    integer :: numStructCtrlParams, numControlForces
 
     !! --- Logic section ---
 
     ierr = 0
+    nullify(pCS%structSensors)
+    nullify(pCS%controlForces)
 
     !! Find the control input parameters that have structural sensors
     !! (triad- and joint dofs only)
 
-    call getCtrlParamsWithStructSensors (inputs,pCS%numStructCtrlParams,tmpIdx)
-    if (pCS%numStructCtrlParams < 0) goto 915
-    if (pCS%numStructCtrlParams == 0) return
+    call getCtrlParamsWithStructSensors (inputs,numStructCtrlParams,tmpIdx)
+    if (numStructCtrlParams < 0) goto 915
+    if (numStructCtrlParams == 0) return
 
     !! Initialize the input side
 
     allocate(lNode_from_SAM_node(numNod), iCin_from_AllVreg(numVreg), &
-         &   pCS%structToControlSensors(pCS%numStructCtrlParams), STAT=ierr)
+         &   pCS%structSensors(numStructCtrlParams), STAT=ierr)
     if (ierr /= 0) then
        ierr = allocationError('InitiateControlStruct')
        return
@@ -178,8 +174,8 @@ contains
 
     !! SENSOR side initialization
 
-    do i = 1, pCS%numStructCtrlParams
-       pS          => pCS%structToControlSensors(i)
+    do i = 1, numStructCtrlParams
+       pS          => pCS%structSensors(i)
        pS%pCtrlPrm => inputs(tmpIdx(i))
        pS%pSensor  => getSensor(pS%pCtrlPrm)
 
@@ -223,11 +219,11 @@ contains
     end if
 
     !! Set which iCin this sensor is connected to
-    do i = 1, pCS%numStructCtrlParams
-       whichVreg                          = pCS%structToControlSensors(i)%whichVreg
-       iCin                               = iCin_from_AllVreg(whichVreg)
-       pCS%structToControlSensors(i)%iCin = iCin
-       pCS%whichVregIn(iCin)              = whichVreg
+    do i = 1, numStructCtrlParams
+       whichVreg                 = pCS%structSensors(i)%whichVreg
+       iCin                      = iCin_from_AllVreg(whichVreg)
+       pCS%structSensors(i)%iCin = iCin
+       pCS%whichVregIn(iCin)     = whichVreg
     end do
 
 
@@ -237,10 +233,10 @@ contains
     !! FORCES side initialization
     !! Find the forces whose sensor is a controller variable
 
-    call getCtrlOutForces (forces, pCS%numControlForces, tmpIdx)
-    if (pCS%numControlForces < 0) goto 915
+    call getCtrlOutForces (forces, numControlForces, tmpIdx)
+    if (numControlForces < 0) goto 915
 
-    allocate(pCS%controlForces(pCS%numControlForces), &
+    allocate(pCS%controlForces(numControlForces), &
          &   iCout_from_AllVreg(numVreg), STAT=ierr)
     if (ierr /= 0) then
        ierr = allocationError('InitiateControlStruct 3')
@@ -249,7 +245,7 @@ contains
 
     iCout_from_AllVreg = 0
 
-    do i = 1, pCS%numControlForces
+    do i = 1, numControlForces
        pF         => pCS%controlForces(i)
        pF%pForce  => forces(tmpIdx(i))
 
@@ -287,7 +283,7 @@ contains
        return
     end if
 
-    do i = 1, pCS%numControlForces
+    do i = 1, numControlForces
        whichVreg                  = pCS%controlForces(i)%whichVreg
        iCout                      = iCout_from_AllVreg(whichVreg)
        pCS%controlForces(i)%iCout = iCout
@@ -297,17 +293,10 @@ contains
     deallocate(iCout_from_AllVreg) !! done with this scratch table
     deallocate(tmpIdx)
 
-    !! Count number of element nodes and set the local element node number
+    !! Count number of element nodes
+    nElNodes = count(lNode_from_SAM_node > 0)
 
-    nElNodes = 0
-    do iSam = 1, size(lNode_from_SAM_node)   !! Loop over all sam node nums
-       if ( lNode_from_SAM_node(iSam) > 0 ) then
-          nELNodes = nElNodes + 1
-          lNode_from_SAM_node(iSam) = nElNodes
-       end if
-    end do
-
-    !! Allocate and initialize MNPC
+    !! Allocate MNPC and MADOF
 
     allocate(pCS%samMNPC(nElNodes), pCS%local_MADOF(nElNodes+1), STAT=ierr)
     if (ierr /= 0) then
@@ -315,19 +304,23 @@ contains
        return
     end if
 
-    pCS%local_MADOF = 0
+    !! Set the local element node numbers
 
-    do iSam = 1, size(lNode_from_SAM_node)   !! Loop over all sam node nums
+    nelNodes = 0
+    do iSam = 1, numNod
        if ( lNode_from_SAM_node(iSam) > 0 ) then
-          pCS%samMNPC( lNode_from_SAM_node(iSam) ) = iSam
+          nELNodes = nElNodes + 1
+          lNode_from_SAM_node(iSam) = nELNodes
+          pCS%samMNPC(nELNodes) = iSam
        end if
     end do
 
 
     !! Set the local node association and dofStart for all the forces and sensors
 
-    do i = 1, size(pCS%structToControlSensors)
-       pS => pCS%structToControlSensors(i)
+    pCS%local_MADOF = 0
+    do i = 1, numStructCtrlParams
+       pS => pCS%structSensors(i)
        pS%lNode    = 0
        pS%nDOFs    = 0
        pS%dofStart = 0
@@ -357,7 +350,7 @@ contains
        end do
     end do
 
-    do i = 1, size(pCS%controlForces)
+    do i = 1, numControlForces
        pF => pCS%controlForces(i)
 
        if      (associated(pF%pForce%triad)) then
@@ -377,31 +370,26 @@ contains
     !! Clean up some scratch space
     deallocate(lNode_from_SAM_node)
 
-    !! Now accumulate the dofStart
+    !! Now accumulate the dofStart and total number of dofs for this element
 
-    iStart = 1
-    do i = 1, size(pCS%local_MADOF)
+    pCS%nDOFs = 0
+    do i = 1, nElNodes
        n = pCS%local_MADOF(i)
-       pCS%local_MADOF(i) = iStart
-       iStart = iStart + n
+       pCS%local_MADOF(i) = pCS%nDOFs + 1
+       pCS%nDOFs = pCS%nDOFs + n
     end do
-
-    !! Number of total dofs for this element
-    pCS%nDOFs = pCS%local_MADOF(nElNodes+1)-1
+    pCS%local_MADOF(nElNodes+1) = pCS%nDOFs + 1
 
     !! Also store the dofStart in the forces and sensors
 
-    n = size(pCS%structToControlSensors)
-    do i = 1,n
-       pS => pCS%structToControlSensors(i)
+    do i = 1, numStructCtrlParams
+       pS => pCS%structSensors(i)
        if (pS%lNode(1) > 0 ) pS%dofStart(1) = pCS%local_MADOF(pS%lNode(1))
        if (pS%lNode(2) > 0 ) pS%dofStart(2) = pCS%local_MADOF(pS%lNode(2))
     end do
 
-    n = size(pCS%controlForces)
-    do i = 1,n
-       pF => pCS%controlForces(i)
-       pF%dofStart = pCS%local_MADOF(pF%lNode)
+    do i = 1, numControlForces
+       pCS%controlForces(i)%dofStart = pCS%local_MADOF(pF%lNode)
     end do
 
     allocate(pCS%Grad_CinWrtSensor(pCS%numVregIn,pCS%nDofs), &
@@ -598,16 +586,16 @@ contains
 
     pCS%Grad_CinWrtSensor = 0.0_dp
 
-    do i = 1, size(pCS%structToControlSensors)
-       call SensorGradient (pCS%structToControlSensors(i)%pCtrlPrm, sGrad, ierr)
+    do i = 1, size(pCS%structSensors)
+       call SensorGradient (pCS%structSensors(i)%pCtrlPrm, sGrad, ierr)
        if (ierr < 0) goto 915
 
        do iNode = 1, 2
-          if (pCS%structToControlSensors(i)%lNode(iNode) > 0) then
+          if (pCS%structSensors(i)%lNode(iNode) > 0) then
              !! Insert into Grad_CinWrtSensor
-             iStart = pCS%structToControlSensors(i)%dofStart(iNode)
-             iCin   = pCS%structToControlSensors(i)%iCin
-             call DAXPY (pCS%structToControlSensors(i)%nDofs(iNode), 1.0_dp, &
+             iStart = pCS%structSensors(i)%dofStart(iNode)
+             iCin   = pCS%structSensors(i)%iCin
+             call DAXPY (pCS%structSensors(i)%nDofs(iNode), 1.0_dp, &
                   &      sGrad(iNode*6-5), 1, &
                   &      pCS%Grad_CinWrtSensor(iCin,iStart), pCS%numVregIn)
           end if

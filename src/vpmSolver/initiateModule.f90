@@ -466,7 +466,7 @@ contains
             &                      size(ctrl%vreg), sam%nnod, err)
        if (err < 0) goto 980
 
-       if (ctrlStruct%numStructCtrlParams < 1) then
+       if (.not. associated(ctrlStruct%structSensors)) then
           deallocate(ctrlStruct)
           nullify(ctrlStruct)
        end if
