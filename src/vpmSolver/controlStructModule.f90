@@ -62,21 +62,11 @@ module ControlStructModule
 
      !! CONTROL PERTURBATION
 
-     integer          :: numVregIn       !! number of inputs to perturb, =size(whichVregIn)
-     integer, pointer :: whichVregIn(:)  !! the vreg indexes that have a structural sensor
+     integer, pointer :: whichVregIn(:)  !< vreg indices for structural sensors
+     integer, pointer :: whichVregOut(:) !< vreg indices for structural loads
 
-     integer          :: numVregOut      !! number of outputs to read perturbation from, =size(whichVregOut)
-     integer, pointer :: whichVregOut(:) !! the vreg indexes which have a structural load vector
-
-     !! SENSOR SIDE
-
-     integer                             :: numStructCtrlParams
-     type(StructSensorGradType), pointer :: structToControlSensors(:)
-
-     !! FORCE SIDE
-
-     integer                             :: numControlForces
-     type(ForceControlGradType), pointer :: controlForces(:)
+     type(StructSensorGradType), pointer :: structSensors(:) !< Sensor side
+     type(ForceControlGradType), pointer :: controlForces(:) !< Force side
 
 
      !! The tangent matrecies
@@ -147,23 +137,26 @@ contains
     integer, allocatable :: iCout_from_allVreg(:)
     integer, pointer     :: tmpIdx(:)
 
-    integer :: i, n, iCin, iCout, iSAM, nElNodes, iStart, whichVreg
+    integer :: i, n, iCin, iCout, iSAM, nElNodes, whichVreg
+    integer :: numStructCtrlParams, numControlForces, numVregIn, numVregOut
 
     !! --- Logic section ---
 
     ierr = 0
+    nullify(pCS%structSensors)
+    nullify(pCS%controlForces)
 
     !! Find the control input parameters that have structural sensors
     !! (triad- and joint dofs only)
 
-    call getCtrlParamsWithStructSensors (inputs,pCS%numStructCtrlParams,tmpIdx)
-    if (pCS%numStructCtrlParams < 0) goto 915
-    if (pCS%numStructCtrlParams == 0) return
+    call getCtrlParamsWithStructSensors (inputs,numStructCtrlParams,tmpIdx)
+    if (numStructCtrlParams < 0) goto 915
+    if (numStructCtrlParams == 0) return
 
     !! Initialize the input side
 
     allocate(lNode_from_SAM_node(numNod), iCin_from_AllVreg(numVreg), &
-         &   pCS%structToControlSensors(pCS%numStructCtrlParams), STAT=ierr)
+         &   pCS%structSensors(numStructCtrlParams), STAT=ierr)
     if (ierr /= 0) then
        ierr = allocationError('InitiateControlStruct')
        return
@@ -175,8 +168,8 @@ contains
 
     !! SENSOR side initialization
 
-    do i = 1, pCS%numStructCtrlParams
-       pS          => pCS%structToControlSensors(i)
+    do i = 1, numStructCtrlParams
+       pS          => pCS%structSensors(i)
        pS%pCtrlPrm => inputs(tmpIdx(i))
        pS%pSensor  => getSensor(pS%pCtrlPrm)
 
@@ -203,27 +196,27 @@ contains
     end do
 
     !! Count number of vreg with structural input
-    pCS%numVregIn = 0
+    numVregIn = 0
     do i = 1, numVreg
        if (iCin_from_AllVreg(i) > 0) then
-          pCS%numVregIn = pCS%numVregIn + 1
-          iCin_from_AllVreg(i) = pCS%numVregIn
+          numVregIn = numVregIn + 1
+          iCin_from_AllVreg(i) = numVregIn
        end if
     end do
 
     !! Set which vreg in (with structural input) are to be perturbed
-    allocate(pCS%whichVregIn(pCS%numVregIn), STAT=ierr)
+    allocate(pCS%whichVregIn(numVregIn), STAT=ierr)
     if (ierr /= 0) then
        ierr = allocationError('InitiateControlStruct 2')
        return
     end if
 
     !! Set which iCin this sensor is connected to
-    do i = 1, pCS%numStructCtrlParams
-       whichVreg                          = pCS%structToControlSensors(i)%whichVreg
-       iCin                               = iCin_from_AllVreg(whichVreg)
-       pCS%structToControlSensors(i)%iCin = iCin
-       pCS%whichVregIn(iCin)              = whichVreg
+    do i = 1, numStructCtrlParams
+       whichVreg                 = pCS%structSensors(i)%whichVreg
+       iCin                      = iCin_from_AllVreg(whichVreg)
+       pCS%structSensors(i)%iCin = iCin
+       pCS%whichVregIn(iCin)     = whichVreg
     end do
 
 
@@ -233,10 +226,10 @@ contains
     !! FORCES side initialization
     !! Find the forces whose sensor is a controller variable
 
-    call getCtrlOutForces (forces, pCS%numControlForces, tmpIdx)
-    if (pCS%numControlForces < 0) goto 915
+    call getCtrlOutForces (forces, numControlForces, tmpIdx)
+    if (numControlForces < 0) goto 915
 
-    allocate(pCS%controlForces(pCS%numControlForces), &
+    allocate(pCS%controlForces(numControlForces), &
          &   iCout_from_AllVreg(numVreg), STAT=ierr)
     if (ierr /= 0) then
        ierr = allocationError('InitiateControlStruct 3')
@@ -245,7 +238,7 @@ contains
 
     iCout_from_AllVreg = 0
 
-    do i = 1, pCS%numControlForces
+    do i = 1, numControlForces
        pF         => pCS%controlForces(i)
        pF%pForce  => forces(tmpIdx(i))
 
@@ -268,22 +261,23 @@ contains
     end do
 
     !! Count number of vreg which are to be read
-    pCS%numVregOut = 0
+    numVregOut = 0
     do i = 1, numVreg
        if (iCout_from_AllVreg(i) > 0) then
-          pCS%numVregOut = pCS%numVregOut + 1
-          iCout_from_AllVreg(i) = pCS%numVregOut
+          numVregOut = numVregOut + 1
+          iCout_from_AllVreg(i) = numVregOut
        end if
     end do
 
-    !! Set which vreg in are to be read
-    allocate(pCS%whichVregOut(pCS%numVregOut), STAT=ierr)
+    allocate(pCS%whichVregOut(numVregOut), STAT=ierr)
     if (ierr /= 0) then
        ierr = allocationError('InitiateControlStruct 3')
        return
     end if
 
-    do i = 1, pCS%numControlForces
+    !! Set which vreg in are to be read
+
+    do i = 1, numControlForces
        whichVreg                  = pCS%controlForces(i)%whichVreg
        iCout                      = iCout_from_AllVreg(whichVreg)
        pCS%controlForces(i)%iCout = iCout
@@ -293,17 +287,8 @@ contains
     deallocate(iCout_from_AllVreg) !! done with this scratch table
     deallocate(tmpIdx)
 
-    !! Count number of element nodes and set the local element node number
-
-    nElNodes = 0
-    do iSam = 1, size(lNode_from_SAM_node)   !! Loop over all sam node nums
-       if ( lNode_from_SAM_node(iSam) > 0 ) then
-          nELNodes = nElNodes + 1
-          lNode_from_SAM_node(iSam) = nElNodes
-       end if
-    end do
-
-    !! Allocate and initialize MNPC
+    !! Count number of element nodes
+    nElNodes = count(lNode_from_SAM_node > 0)
 
     allocate(pCS%samMNPC(nElNodes), pCS%local_MADOF(nElNodes+1), STAT=ierr)
     if (ierr /= 0) then
@@ -311,19 +296,23 @@ contains
        return
     end if
 
-    pCS%local_MADOF = 0
+    !! Set the local element node numbers
 
-    do iSam = 1, size(lNode_from_SAM_node)   !! Loop over all sam node nums
+    nelNodes = 0
+    do iSam = 1, numNod
        if ( lNode_from_SAM_node(iSam) > 0 ) then
-          pCS%samMNPC( lNode_from_SAM_node(iSam) ) = iSam
+          nELNodes = nElNodes + 1
+          lNode_from_SAM_node(iSam) = nELNodes
+          pCS%samMNPC(nELNodes) = iSam
        end if
     end do
 
 
     !! Set the local node association and dofStart for all the forces and sensors
 
-    do i = 1, size(pCS%structToControlSensors)
-       pS => pCS%structToControlSensors(i)
+    pCS%local_MADOF = 0
+    do i = 1, numStructCtrlParams
+       pS => pCS%structSensors(i)
        pS%lNode    = 0
        pS%nDOFs    = 0
        pS%dofStart = 0
@@ -353,7 +342,7 @@ contains
        end do
     end do
 
-    do i = 1, size(pCS%controlForces)
+    do i = 1, numControlForces
        pF => pCS%controlForces(i)
 
        if      (associated(pF%pForce%triad)) then
@@ -373,36 +362,32 @@ contains
     !! Clean up some scratch space
     deallocate(lNode_from_SAM_node)
 
-    !! Now accumulate the dofStart
+    !! Now accumulate the dofStart and total number of dofs for this element
 
-    iStart = 1
-    do i = 1, size(pCS%local_MADOF)
+    pCS%nDOFs = 0
+    do i = 1, nElNodes
        n = pCS%local_MADOF(i)
-       pCS%local_MADOF(i) = iStart
-       iStart = iStart + n
+       pCS%local_MADOF(i) = pCS%nDOFs + 1
+       pCS%nDOFs = pCS%nDOFs + n
     end do
-
-    !! Number of total dofs for this element
-    pCS%nDOFs = pCS%local_MADOF(nElNodes+1)-1
+    pCS%local_MADOF(nElNodes+1) = pCS%nDOFs + 1
 
     !! Also store the dofStart in the forces and sensors
 
-    n = size(pCS%structToControlSensors)
-    do i = 1,n
-       pS => pCS%structToControlSensors(i)
+    do i = 1, numStructCtrlParams
+       pS => pCS%structSensors(i)
        if (pS%lNode(1) > 0 ) pS%dofStart(1) = pCS%local_MADOF(pS%lNode(1))
        if (pS%lNode(2) > 0 ) pS%dofStart(2) = pCS%local_MADOF(pS%lNode(2))
     end do
 
-    n = size(pCS%controlForces)
-    do i = 1,n
+    do i = 1, numControlForces
        pF => pCS%controlForces(i)
-       pF%dofStart = pCS%local_MADOF(pF%lNode)
+       pCS%controlForces(i)%dofStart = pCS%local_MADOF(pF%lNode)
     end do
 
-    allocate(pCS%Grad_CinWrtSensor(pCS%numVregIn,pCS%nDofs), &
-         &   pCS%Grad_ForceWrtCout(pCS%nDofs,pCS%numVregOut), &
-         &   pCS%ctrlProps(pCS%numVregOut,4,pCS%numVregIn), &
+    allocate(pCS%Grad_CinWrtSensor(numVregIn,pCS%nDofs), &
+         &   pCS%Grad_ForceWrtCout(pCS%nDofs,numVregOut), &
+         &   pCS%ctrlProps(numVregOut,4,numVregIn), &
          &   pCS%massMat(pCS%nDofs,pCS%nDofs), &
          &   pCS%dampMat(pCS%nDofs,pCS%nDofs), &
          &   pCS%stiffMat(pCS%nDofs,pCS%nDofs), &
@@ -566,12 +551,14 @@ contains
     integer                , intent(out)   :: ierr
 
     !! Local variables
-    integer  :: i, iNode, iCin, iCout, iStart, nStep
+    integer  :: i, iNode, iCin, iCout, iStart, nStep, numVregIn, numVregOut
     real(dp) :: sGrad(12), fGrad(6)
 
     !! --- Logic section ---
 
     ierr = 0
+    numVregIn = size(pCS%whichVregIn)
+    numVregOut = size(pCS%whichVregOut)
 
     !! Compute the force gradients w.r.t control outputs
 
@@ -592,19 +579,18 @@ contains
 
     pCS%Grad_CinWrtSensor = 0.0_dp
 
-    do i = 1, size(pCS%structToControlSensors)
-       call SensorGradient (pCS%structToControlSensors(i)%pCtrlPrm%engine, &
-            &               sGrad, ierr)
+    do i = 1, size(pCS%structSensors)
+       call SensorGradient (pCS%structSensors(i)%pCtrlPrm%engine, sGrad, ierr)
        if (ierr < 0) goto 915
 
        do iNode = 1, 2
-          if (pCS%structToControlSensors(i)%lNode(iNode) > 0) then
+          if (pCS%structSensors(i)%lNode(iNode) > 0) then
              !! Insert into Grad_CinWrtSensor
-             iStart = pCS%structToControlSensors(i)%dofStart(iNode)
-             iCin   = pCS%structToControlSensors(i)%iCin
-             call DAXPY (pCS%structToControlSensors(i)%nDofs(iNode), 1.0_dp, &
+             iStart = pCS%structSensors(i)%dofStart(iNode)
+             iCin   = pCS%structSensors(i)%iCin
+             call DAXPY (pCS%structSensors(i)%nDofs(iNode), 1.0_dp, &
                   &      sGrad(iNode*6-5), 1, &
-                  &      pCS%Grad_CinWrtSensor(iCin,iStart), pCS%numVregIn)
+                  &      pCS%Grad_CinWrtSensor(iCin,iStart), numVregIn)
           end if
        end do
     end do
@@ -616,40 +602,34 @@ contains
     select case (pCS%ctrlSysEigFlag)
     case (1) ! nPerturb = 3: P, I and D gains
        call EstimateControllerProperties01 (sys, ctrl, msim, &
-            &                               pCS%numVregIn, pCS%whichVregIn, &
-            &                               pCS%numVregOut, pCS%whichVregOut, &
+            &                               pCS%whichVregIn, pCS%whichVregOut, &
             &                               pCS%ctrlProps, ierr)
 
     case (2) ! nPerturb = 4
        call EstimateControllerProperties02 (sys, ctrl, msim, &
-            &                               pCS%numVregIn, pCS%whichVregIn, &
-            &                               pCS%numVregOut, pCS%whichVregOut, &
+            &                               pCS%whichVregIn, pCS%whichVregOut, &
             &                               pCS%ctrlProps, ierr)
 
     case (3) ! nPerturb = 6
        call EstimateControllerProperties03 (sys, ctrl, msim, &
-            &                               pCS%numVregIn, pCS%whichVregIn, &
-            &                               pCS%numVregOut, pCS%whichVregOut, &
+            &                               pCS%whichVregIn, pCS%whichVregOut, &
             &                               pCS%ctrlProps, ierr)
 
     case (4:8) ! nPerturb = 5
        nStep = pCS%ctrlSysEigFlag-3 ! nStep = 1...5
        call EstimateControllerProperties04 (sys, ctrl, msim, &
-            &                               pCS%numVregIn, pCS%whichVregIn, &
-            &                               pCS%numVregOut, pCS%whichVregOut, &
+            &                               pCS%whichVregIn, pCS%whichVregOut, &
             &                               nStep, pCS%ctrlProps, ierr)
 
     case (9:11) ! nPerturb = 5
        nStep = 10**(pCS%ctrlSysEigFlag-8) ! nStep = 10,100,1000
        call EstimateControllerProperties04 (sys, ctrl, msim, &
-            &                               pCS%numVregIn, pCS%whichVregIn, &
-            &                               pCS%numVregOut, pCS%whichVregOut, &
+            &                               pCS%whichVregIn, pCS%whichVregOut, &
             &                               nStep, pCS%ctrlProps, ierr)
 
     case (500) ! nPerturb = 1
        call EstimateControllerProperties500 (sys, ctrl, msim, &
-            &                                pCS%numVregIn, pCS%whichVregIn, &
-            &                                pCS%numVregOut, pCS%whichVregOut, &
+            &                                pCS%whichVregIn, pCS%whichVregOut, &
             &                                pCS%ctrlProps, ierr)
 
     case default ! Error
@@ -713,19 +693,19 @@ contains
       real(dp), intent(in)  :: ctrlProp(:,:)
       integer , intent(out) :: ierr
       real(dp), pointer     :: rWork(:)
-      rWork => getRealScratchArray(pCS%nDofs*pCS%numVregIn,ierr)
+      rWork => getRealScratchArray(pCS%nDofs*numVregIn,ierr)
       if (ierr == 0) then
          !! rWork(nDofs,nVregIn) = Grad_ForceWrtCout(nDofs,nVregOut)
          !!                      * ctrlProp(nVregOut,nVregIn)
-         call DGEMM ('N','N', pCS%nDofs, pCS%numVregIn, pCS%numVregOut, &
+         call DGEMM ('N','N', pCS%nDofs, numVregIn, numVregOut, &
               &       1.0_dp, pCS%Grad_ForceWrtCout(1,1), pCS%nDofs, &
-              &               ctrlProp(1,1), pCS%numVregOut, &
+              &               ctrlProp(1,1), numVregOut, &
               &       0.0_dp, rWork(1), pCS%nDofs)
          !! Cmat(nDofs,nDofs) = -rWork(nDofs,nVregIn)
          !!                   * Grad_CinWrtSensor(nVregIn,nDofs)
-         call DGEMM ('N','N', pCS%nDofs,  pCS%nDofs, pCS%numVregIn,&
+         call DGEMM ('N','N', pCS%nDofs,  pCS%nDofs, numVregIn,&
               &      -1.0_dp, rWork(1), pCS%nDofs, &
-              &               pCS%Grad_CinWrtSensor(1,1), pCS%numVregIn, &
+              &               pCS%Grad_CinWrtSensor(1,1), numVregIn, &
               &       0.0_dp, Cmat(1,1), pCS%nDofs)
       end if
     end subroutine dmmm
@@ -749,9 +729,8 @@ contains
 
 
   subroutine EstimateControllerProperties01 (sys, ctrl, msim, &
-    &                                   numVregIn, whichVregIn,   &
-    &                                   numVregOut, whichVregOut, &
-    &                                        ctrlProps, ierr)
+       &                                     whichVregIn, whichVregOut, &
+       &                                     ctrlProps, ierr)
 
     !!==========================================================================
     !! Purpose:
@@ -803,9 +782,7 @@ contains
     type(SystemType)   , intent(inout) :: sys
     type(ControlType)  , intent(in)    :: ctrl
     integer            , intent(in)    :: msim(:)
-    integer,             intent(in)    :: numVregIn         !! Number of vreg in to perturb
     integer,             intent(in)    :: whichVregIn(:)    !! Which vreg in to perturb
-    integer,             intent(in)    :: numVregOut        !! Number of vreg out to read variation from
     integer,             intent(in)    :: whichVregOut(:)   !! Which vreg out to read variation from
     real(dp),            intent(out)   :: ctrlProps(:,:,:)  !! table for storing controller properties
     !						  		                        !!(no. of outputs from controller,
@@ -837,11 +814,14 @@ contains
     real(dp) :: dyMatrix(nPerturb,nPerturb)      !! matrix of perturbation parameters
     real(dp), allocatable :: duTable(:,:)        !! table for storing du = u(y)-u(y0)
 
-    integer :: i, j, iInput
+    integer :: i, j, iInput, numVregIn, numVregOut
 
     !! --- Logic section ---
 
     ctrlProps = 0.0_dp
+
+    numVregIn  = size(whichVregIn)
+    numVregOut = size(whichVregOut)
 
     allocate(uy0(numVregOut),uy(numVregOut), &
          &   duTable(nPerturb,numVregOut), STAT=ierr)
@@ -934,9 +914,8 @@ contains
 
 
   subroutine EstimateControllerProperties02 (sys, ctrl, msim, &
-    &                                   numVregIn, whichVregIn,   &
-    &                                   numVregOut, whichVregOut, &
-    &                                        ctrlProps, ierr)
+       &                                     whichVregIn, whichVregOut, &
+       &                                     ctrlProps, ierr)
 
     !!==========================================================================
     !! Purpose:
@@ -987,9 +966,7 @@ contains
     type(SystemType)   , intent(inout) :: sys
     type(ControlType)  , intent(in)    :: ctrl
     integer            , intent(in)    :: msim(:)
-    integer,             intent(in)    :: numVregIn         !! Number of vreg in to perturb
     integer,             intent(in)    :: whichVregIn(:)    !! Which vreg in to perturb
-    integer,             intent(in)    :: numVregOut        !! Number of vreg out to read variation from
     integer,             intent(in)    :: whichVregOut(:)   !! Which vreg out to read variation from
     real(dp),            intent(out)   :: ctrlProps(:,:,:)  !! table for storing controller properties
     !						  		                        !!(no. of outputs from controller,
@@ -1032,11 +1009,14 @@ contains
     real(dp) :: dyMatrix(nPerturb,nPerturb)     !! matrix of perturbation parameters
     real(dp), allocatable :: duTable(:,:)       !! table for storing du = u(y)-u(y0)
 
-    integer :: i, j
+    integer :: i, j, numVregIn, numVregOut
 
     !! --- Logic section ---
 
     ctrlProps = 0.0_dp
+
+    numVregIn  = size(whichVregIn)
+    numVregOut = size(whichVregOut)
 
     allocate(uy0(numVregOut),uy1(numVregOut),uy(numVregOut), &
          &   duTable(nPerturb,numVregOut), STAT=ierr)
@@ -1197,9 +1177,8 @@ contains
 
 
   subroutine EstimateControllerProperties03 (sys, ctrl, msim, &
-    &                                   numVregIn, whichVregIn,   &
-    &                                   numVregOut, whichVregOut, &
-    &                                        ctrlProps, ierr)
+       &                                     whichVregIn, whichVregOut, &
+       &                                     ctrlProps, ierr)
 
     !!==========================================================================
     !! Purpose:
@@ -1254,9 +1233,7 @@ contains
     type(SystemType)   , intent(inout) :: sys
     type(ControlType)  , intent(in)    :: ctrl
     integer            , intent(in)    :: msim(:)
-    integer,             intent(in)    :: numVregIn         !! Number of vreg in to perturb
     integer,             intent(in)    :: whichVregIn(:)    !! Which vreg in to perturb
-    integer,             intent(in)    :: numVregOut        !! Number of vreg out to read variation from
     integer,             intent(in)    :: whichVregOut(:)   !! Which vreg out to read variation from
     real(dp),            intent(out)   :: ctrlProps(:,:,:)  !! table for storing controller properties
     !						  		                        !!(no. of outputs from controller,
@@ -1300,11 +1277,14 @@ contains
     real(dp) :: dyMatrix(nPerturb,nPerturb)      !! matrix of perturbation parameters
     real(dp), allocatable :: duTable(:,:)        !! table for storing du-results
 
-    integer :: i, j
+    integer :: i, j, numVregIn, numVregOut
 
     !! --- Logic section ---
 
     ctrlProps = 0.0_dp
+
+    numVregIn  = size(whichVregIn)
+    numVregOut = size(whichVregOut)
 
     allocate(uy0(numVregOut),uy1(numVregOut),uy(numVregOut), &
          &   duTable(nPerturb,numVregOut), STAT=ierr)
@@ -1427,8 +1407,7 @@ contains
 
 
   subroutine EstimateControllerProperties04 (sys, ctrl, msim, &
-       &                                     numVregIn, whichVregIn, &
-       &                                     numVregOut, whichVregOut, &
+       &                                     whichVregIn, whichVregOut, &
        &                                     nStep, ctrlProps, ierr)
 
     !!==========================================================================
@@ -1482,9 +1461,7 @@ contains
     type(SystemType)   , intent(inout) :: sys
     type(ControlType)  , intent(in)    :: ctrl
     integer            , intent(in)    :: msim(:)
-    integer,             intent(in)    :: numVregIn         !! Number of vreg in to perturb
     integer,             intent(in)    :: whichVregIn(:)    !! Which vreg in to perturb
-    integer,             intent(in)    :: numVregOut        !! Number of vreg out to read variation from
     integer,             intent(in)    :: whichVregOut(:)   !! Which vreg out to read variation from
     integer,             intent(in)    :: nStep             !! number of steps in between perturbations
     real(dp),            intent(out)   :: ctrlProps(:,:,:)  !! table for storing controller properties
@@ -1522,11 +1499,14 @@ contains
     real(dp) :: dyMatrix(nPerturb,nPerturb)      !! matrix of perturbation parameters
     real(dp), allocatable :: duTable(:,:)        !! table for storing du = u(y)-u(y0)
 
-    integer :: i, ii, j
+    integer :: i, ii, j, numVregIn, numVregOut
 
     !! --- Logic section ---
 
     ctrlProps = 0.0_dp
+
+    numVregIn  = size(whichVregIn)
+    numVregOut = size(whichVregOut)
 
     allocate(uy0(numVregOut),uy(numVregOut), &
          &   duTable(nPerturb,numVregOut), STAT=ierr)
@@ -1653,8 +1633,7 @@ contains
   !> @date 7 July 2010
 
   subroutine EstimateControllerProperties500 (sys, ctrl, msim, &
-       &                                      numVregIn, whichVregIn, &
-       &                                      numVregOut, whichVregOut, &
+       &                                      whichVregIn, whichVregOut, &
        &                                      ctrlProps, ierr)
 
     use SystemTypeModule , only : SystemType, dp
@@ -1666,9 +1645,7 @@ contains
     type(SystemType) , intent(inout) :: sys
     type(ControlType), intent(in)    :: ctrl
     integer          , intent(in)    :: msim(:)
-    integer          , intent(in)    :: numVregIn        !! Number of vreg in to perturb
     integer          , intent(in)    :: whichVregIn(:)   !! Which vreg in to perturb
-    integer          , intent(in)    :: numVregOut       !! Number of vreg out to read variation from
     integer          , intent(in)    :: whichVregOut(:)  !! Which vreg out to read variation from
     real(dp)         , intent(out)   :: ctrlProps(:,:,:) !! table for storing controller properties
     integer          , intent(inout) :: ierr
@@ -1687,11 +1664,14 @@ contains
     real(dp) :: ddydt       ! d(dy/dt), 1st derivative of y with respect to time t
     real(dp) :: dintydt     ! definite integral of y with respect to time t
 
-    integer :: i, iEntity
+    integer :: i, iEntity, numVregIn, numVregOut
 
     !! --- Logic section ---
 
     ctrlProps = 0.0_dp
+
+    numVregIn  = size(whichVregIn)
+    numVregOut = size(whichVregOut)
 
     allocate(uy0(numVregOut),uy(numVregOut), STAT=ierr)
     if (ierr /= 0) then
