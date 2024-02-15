@@ -168,23 +168,44 @@ contains
   !> @param[in] M System mass matrix
   !> @param[in] C System damping matrix
   !> @param[in] K System stiffness matrix
+  !> @param[in] Q System steady-state error elimination matrix
   !> @param[out] ierr Error flag
   !>
   !> @details The generalized eigenvalue problem is on the form
   !>          @b A @b z = &lambda; @b B @b z
   !>
-  !> With damping:
-  !>
-  !>          | K  0 |*{z} = lambda * | -C -M |*{z}
-  !>          | 0 -M |                | -M  0 |
-  !>
   !> Without damping:
   !>
   !>          [K]*{z} = lambda*[M]*{z}
   !>
+  !> With damping (2n state-space form):
+  !>
+  !>          | K  0 |*{z} = lambda * | -C -M |*{z}
+  !>          | 0 -M |                | -M  0 |
+  !>
+  !> With damping and/or steady-state error elimination (3n state-space form):
+  !>
+  !>          | Q  0  0 |*{z} = lambda * | -K -C -M |*{z}
+  !>          | 0  K  0 |                |  K  0  0 |
+  !>          | 0  0  M |                |  0  M  0 |
+  !>
+  !> @note The 3n state-space method does not work quite yet.
+  !> No eigenvalues are obtained for unknown reasons.
+  !> However, the @b A and @b B matrices seems to be correct.
+  !> The method has been proven valid in MATLAB.
+  !> But the @b A and @b B matrices obtained through this code yield
+  !> the same eigenvalue results in MATLAB.
+  !> Can it be due to singular or very sparse matrices?
+  !>
   !> @callgraph @callergraph
+  !>
+  !> @author Knut Morten Okstad
+  !> @date 22 Mar 2000
+  !>
+  !> @author Magne Bratland
+  !> @date 8 Oct 2010
 
-  subroutine fillEigenSystem (modes,neq,M,C,K,ierr)
+  subroutine fillEigenSystem (modes,neq,M,C,K,Q,ierr)
 
     use ModesTypeModule    , only : ModesType
     use SysMatrixTypeModule, only : SysMatrixType, convertSysMat
@@ -192,11 +213,11 @@ contains
 
     type(ModesType)    , intent(inout) :: modes
     integer            , intent(in)    :: neq
-    type(SysMatrixType), intent(in)    :: M, C, K
+    type(SysMatrixType), intent(in)    :: M, C, K, Q
     integer            , intent(out)   :: ierr
 
     !! Local variables
-    integer :: i, j
+    integer :: i, j, n2, n3
 
     !! --- Logic section ---
 
@@ -205,9 +226,59 @@ contains
 
     A = 0.0_dp
     B = 0.0_dp
+    n2 = 2*neq
+    n3 = 3*neq
 
-    call convertSysMat (K,A,neq,1,11,ierr)
-    if (ierr < 0) goto 915
+    !! The A matrix
+
+    if (modes%solver == 6) then
+       !! A(1:n,1:n) = Q
+       call convertSysMat (Q,A,neq,1,11,ierr)
+       if (ierr < 0) goto 915
+       !! A(n+1:2n,n+1:2n) = K
+       call convertSysMat (K,A(:,neq+1:),neq,neq+1,11,ierr)
+       if (ierr < 0) goto 915
+       !! A(2n+1:3n,2n+1:3n) = M
+       call convertSysMat (M,A(:,n2+1:),neq,n2+1,11,ierr)
+       if (ierr < 0) goto 915
+    else
+       !! A(1:n,1:n) = K
+       call convertSysMat (K,A,neq,1,11,ierr)
+       if (ierr < 0) goto 915
+    end if
+    if (modes%solver == 4) then
+       !! A(n+1:2n,n+1:2n) = -M
+       call convertSysMat (M,A(:,neq+1:),neq,neq+1,-11,ierr)
+       if (ierr < 0) goto 915
+    end if
+
+    !! The B matrix
+
+    if (modes%solver == 6) then
+       !! B(1:n,1:n) = -K
+       B(1:neq,1:neq) = -A(neq+1:n2,neq+1:n2)
+       !! B(n+1:2n,1:n) = K
+       B(neq+1:n2,1:neq) = A(neq+1:n2,neq+1:n2)
+       !! B(1:n,n+1:2n) = -C
+       call convertSysMat (C,B(:,neq+1:),neq,1,-11,ierr)
+       if (ierr < 0) goto 915
+       !! B(2n+1:3n,n+1:2n) = M
+       B(n2+1:n3,neq+1:n2) = A(n2+1:n3,n2+1:n3)
+       !! B(1:n,2n+1:3n) = -M
+       B(1:neq,n2+1:n3) = -A(n3+1:n3,n2+1:n3)
+    else if (modes%solver == 4) then
+       !! B(n+1:2n,1:n) = M
+       B(neq+1:n2,1:neq) = A(neq+1:n2,neq+1:n2)
+       !! B(1:n,n+1:2n) = M
+       B(1:neq,neq+1:n2) = A(neq+1:n2,neq+1:n2)
+       !! B(1:n,1:n) = -C
+       call convertSysMat (C,B,neq,1,-11,ierr)
+       if (ierr < 0) goto 915
+    else
+       !! B(1:n,1:n) = M
+       call convertSysMat (M,B,neq,1,11,ierr)
+       if (ierr < 0) goto 915
+    end if
 
     if (modes%solver == 5) then
        !! Symmetrice the dense stiffness matrix, A
@@ -219,109 +290,11 @@ contains
        end do
     end if
 
-    if (modes%solver == 4) then
-       call convertSysMat (M,A(:,neq+1:),neq,neq+1,-11,ierr)
-       if (ierr < 0) goto 915
-       B(neq+1:neq+neq,1:neq) = A(neq+1:neq+neq,neq+1:neq+neq)
-       B(1:neq,neq+1:neq+neq) = A(neq+1:neq+neq,neq+1:neq+neq)
-       call convertSysMat (C,B,neq,1,-11,ierr)
-       if (ierr < 0) goto 915
-    else
-       call convertSysMat (M,B,neq,1,11,ierr)
-       if (ierr < 0) goto 915
-    end if
-
     return
 
 915 call reportError (debugFileOnly_p,'fillEigenSystem')
 
   end subroutine fillEigenSystem
-
-
-  !!============================================================================
-  !> @brief Builds the full matrices of the generalized eigenvalue problem.
-  !>
-  !> @param modes Eigenmode data container
-  !> @param[in] neq Number of equations, i.e., dimension of system matrices
-  !> @param[in] M System mass matrix
-  !> @param[in] C System damping matrix
-  !> @param[in] K System stiffness matrix
-  !> @param[in] Q System steady-state error elimination matrix
-  !> @param[out] ierr Error flag
-  !>
-  !> @details The generalized eigenvalue problem in 3n state-space form reads
-  !>          @b A @b z = &lambda; @b B @b z
-  !>
-  !> with damping and steady-state error elimination, this is
-  !>
-  !>          | Q  0  0 |*{z} = lambda * | -K -C -M |*{z}
-  !>          | 0  K  0 |                |  K  0  0 |
-  !>          | 0  0  M |                |  0  M  0 |
-  !>
-  !> @note This method does not work quite yet.
-  !> No eigenvalues are obtained for unknown reasons.
-  !> However, the @b A and @b B matrices seems to be correct.
-  !> The method has been proven valid in MATLAB.
-  !> But the @b A and @b B matrices obtained through this code yield
-  !> the same eigenvalue results in MATLAB.
-  !> Can it be due to singular or very sparse matrices?
-  !>
-  !> @callgraph @callergraph
-  !>
-  !> @author Magne Bratland
-  !>
-  !> @date 8 Oct 2010
-
-  subroutine fillEigenSystem3nStSp (modes,neq,M,C,K,Q,ierr)
-
-    use ModesTypeModule    , only : ModesType
-    use SysMatrixTypeModule, only : SysMatrixType, convertSysMat
-    use reportErrorModule  , only : reportError, debugFileOnly_p
-
-    type(ModesType)    , intent(inout) :: modes
-    integer            , intent(in)    :: neq
-    type(SysMatrixType), intent(in)    :: M, C, K, Q
-    integer            , intent(out)   :: ierr
-
-    !! --- Logic section ---
-
-    call allocEigenMatrices (modes,neq,ierr)
-    if (ierr < 0) goto 915
-
-    A = 0.0_dp
-    B = 0.0_dp
-
-    !! The A matrix
-
-    !! A(1:n,1:n) = Q
-    call convertSysMat (Q,A,neq,1,11,ierr)
-    if (ierr < 0) goto 915
-    !! A(n+1:2n,1+n:2n) = K
-    call convertSysMat (K,A(:,neq+1:),neq,neq+1,11,ierr)
-    if (ierr < 0) goto 915
-    !! A(2n+1:3n,2n+1:3n) = M
-    call convertSysMat (M,A(:,2*neq+1:),neq,2*neq+1,11,ierr)
-    if (ierr < 0) goto 915
-
-    !! The B matrix
-
-    !! B(1:n,1:n) = -K
-    B(1:neq,1:neq) = -A(neq+1:2*neq,neq+1:2*neq)
-    !! B(n+1:2n,1:n) = K
-    B(neq+1:2*neq,1:neq) = A(neq+1:2*neq,neq+1:2*neq)
-    !! B(1:n,n+1:2n) = -C
-    call convertSysMat (C,B(:,neq+1:),neq,1,-11,ierr)
-    if (ierr < 0) goto 915
-    !! B(2n+1:3n,n+1:2n) = M
-    B(2*neq+1:3*neq,neq+1:2*neq) = A(2*neq+1:3*neq,2*neq+1:3*neq)
-    !! B(1:n,2n+1:3n) = -M
-    B(1:neq,2*neq+1:3*neq) = -A(2*neq+1:3*neq,2*neq+1:3*neq)
-
-    return
-
-915 call reportError (debugFileOnly_p,'fillEigenSystem3nStSp')
-
-  end subroutine fillEigenSystem3nStSp
 
 
   !!============================================================================
@@ -766,8 +739,8 @@ contains
   !> - 1 : Use LANCZ1 (undamped systems only)
   !> - 2 : Use LANCZ2 (undamped systems only)
   !> - 3 : Use LAPACK::DGGEVX (undamped system)
-  !> - 4 : Use LAPACK::DGGEVX (damped system)
-  !> - 5 : Use LAPACK::DSYGVX (symmetric system)
+  !> - 4 : Use LAPACK::DGGEVX (damped system, 2n state-space form)
+  !> - 5 : Use LAPACK::DSYGVX (undamped, symmetric system)
   !> - 6 : Use LAPACK::DGGEVX (3n state-space form)
   !>
   !> @callgraph @callergraph
@@ -836,11 +809,16 @@ contains
     if (associated(pCS)) then
        !! Call routine for df/dx for controller
        call BuildStructControlJacobi (pCS,ctrl,sys,sam%mpar,ierr)
-       if (ierr /= 0) goto 915
+       if (ierr < 0) goto 915
        !! Note: If the controller contains non-collocated sensors and actuators,
        !! the matrices will be unsymmetric. However, these will by the existing
        !! code be faulty symmetrizied
        if (modes%solver == 6) then
+          if (IAND(ierr,1) == 0) then
+             call reportError (warning_p,'The Q-matrix is identically zero '// &
+                  &            'since there are no position controllers.', &
+                  &            'Maybe use the 2n state-space solver instead?')
+          end if
           call csAddEM (sam,pCS%samElNum,pCS%nDofs,pCS%SSEEMat,modes%Qmat,ierr)
           if (ierr /= 0) goto 915
        end if
@@ -954,16 +932,11 @@ contains
           ierr = 0
        end if
 
-    else if (modes%solver == 3 .or. complexModes) then
+    else
 
-       !! Establish the first-order non-symmetric generalized eigenvalue problem
-       if (modes%solver == 6) then
-          call fillEigenSystem3nStSp (modes,neqEig,modes%Mmat, &
-               &                      modes%Cmat,modes%Kmat,modes%Qmat,ierr)
-       else
-          call fillEigenSystem (modes,neqEig,modes%Mmat, &
-               &                modes%Cmat,modes%Kmat,ierr)
-       end if
+       !! Establish the first-order generalized eigenvalue problem
+       call fillEigenSystem (modes,neqEig,modes%Mmat, &
+            &                modes%Cmat,modes%Kmat,modes%Qmat,ierr)
        if (ierr /= 0) then
           call stopTimer (eig_p)
           goto 915
@@ -975,8 +948,27 @@ contains
        end if
 #endif
 
-       !! Solve the generalized eigenvalue problem using LAPACK
-       call DGGEVX ('B','N','V','B', &
+    end if
+    if (modes%solver == 5) then
+
+       !! Solve the generalized symmetric eigenvalue problem using LAPACK
+       Abnorm = 2.0_dp*DLAMCH('S')
+       call DSYGVX (1, 'V', 'I', 'U', &
+            &       N, A(1,1), N, B(1,1), N, Work(1), Work(1), &
+            &       1, modes%nModes, Abnorm, j, alphaR(1), V(1,1), N, &
+            &       Work(1), Lwork, Iwork(1), indx(1), ierr)
+       if (ierr /= 0) then
+          write(emsg,"('Error from LAPACK::DSYGVX, INFO =',I6)") ierr
+          call reportError (errorFileOnly_p,emsg)
+          ierr = -2
+          call stopTimer (eig_p)
+          goto 915
+       end if
+
+    else if (modes%solver >= 3) then
+
+       !! Solve the generalized non-symmetric eigenvalue problem using LAPACK
+       call DGGEVX ('B', 'N', 'V', 'B', &
             &       N, A(1,1), N, B(1,1), N, alphaR(1), alphaI(1), beta(1), &
             &       V(1,1), N, V(1,1), N, i, j, Lscale(1), Rscale(1), &
             &       Abnorm, Bbnorm, rcondE(1), rcondV(1), &
@@ -997,6 +989,8 @@ contains
        end if
 #endif
 
+    end if
+    if (modes%solver >= 3) then
        io = getErrorFile()
        if (complexModes) then
 
@@ -1023,42 +1017,6 @@ contains
                &                    iprint,io,ierr)
 
        end if
-
-    else
-
-       !! Establish the symmetric generalized eigenvalue problem
-       call fillEigenSystem (modes,neqEig,modes%Mmat,modes%Cmat,modes%Kmat,ierr)
-       if (ierr /= 0) then
-          call stopTimer (eig_p)
-          goto 915
-       end if
-
-       !! Solve the generalized eigenvalue problem using LAPACK
-       Abnorm = 2.0_dp*DLAMCH('S')
-       call DSYGVX (1,'V','I','U', &
-            &       N, A(1,1), N, B(1,1), N, Work(1), Work(1), &
-            &       1, modes%nModes, Abnorm, j, alphaR(1), V(1,1), N, &
-            &       Work(1), Lwork, Iwork(1), indx(1), ierr)
-       if (ierr /= 0) then
-          write(emsg,"('Error from LAPACK::DSYGVX, INFO =',I6)") ierr
-          call reportError (errorFileOnly_p,emsg)
-          ierr = -2
-          call stopTimer (eig_p)
-          goto 915
-       end if
-
-       allocate(modeOrder(modes%nModes),normFactors(modes%nModes),stat=ierr)
-       if (ierr /= 0) then
-          ierr = allocationError('eigenModes')
-          call stopTimer (eig_p)
-          return
-       end if
-
-       !! Extract real eigenvalues and expand the associated eigenvectors
-       io = getErrorFile()
-       call findRealEigenValues (sam,modes,normFactors,modeOrder, &
-            &                    iprint,io,ierr)
-
     end if
 
     call stopTimer (eig_p)
