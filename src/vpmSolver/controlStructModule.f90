@@ -641,6 +641,8 @@ contains
     end select
     if (ierr < 0) goto 915
 
+    nStep = ierr
+
     !! Steady-state error elimination matrix (Q)
     call dMMM (pCS%SSEEMat,pCS%ctrlProps(:,1,:),ierr)
     if (ierr < 0) goto 915
@@ -677,6 +679,8 @@ contains
 !            pCS%massMat(j,i)  =  pCS%massMat(i,j)
 !       end do
 !    end do
+
+    ierr = nStep ! Pass the return status from EstimateControllerProperties
 
     return
 
@@ -728,49 +732,77 @@ contains
   end subroutine BuildStructControlJacobi
 
 
+  !!============================================================================
+  !> @brief Estimates the controller gradient properties by perturbation.
+  !>
+  !> @param sys System level model data
+  !> @param ctrl Control system data
+  !> @param[in] msim Matrix of simulation parameters
+  !> @param[in] whichVregIn Which vreg inputs to perturb
+  !> @param[in] whichVregout Which vreg outputs to read variation from
+  !> @param[out] ctrlProps 3D table for storing controller properties
+  !> (no. of outputs, no. of controller properties, no. of inputs)
+  !> - ctrlProps(:,1,:) = Q
+  !> - ctrlProps(:,2,:) = K
+  !> - ctrlProps(:,3,:) = C
+  !> - ctrlProps(:,4,:) = M
+  !>
+  !> @details
+  !> We use a perturbation method, simular to the Matrix Stiffness Method /
+  !> (Virtual) Displacement Method / Unit Load Method to find the equivalent
+  !> mechanical properties of the controller. These controller properties will
+  !> be added to existing matrices when conducting modal/eigenvalue analysis.
+  !>
+  !> In this routine, the controller is limited to be of type PID.
+  !> The equation for the system is:
+  !>
+  !>     M*x'' + C*x' + K*x + Q*int(x)dt = F
+  !>
+  !> or
+  !>
+  !>     M*(d2x/dt2) + C*(dx/dt) + K*x + Q*int(x)dt = F
+  !>
+  !> where M is the mass, C is the damping, K is the stiffness,
+  !> and Q is the steady state error elimination.
+  !>
+  !> Controller input = y, controller output = u.
+  !>
+  !> The values of interest are:
+  !> - du/dy: The change du in output from controller with respect to
+  !>          the change dy in input to controller.
+  !>          du/dy = proportional gain, Kp.
+  !> - du/(int(dy)dt): The change du in output from controller with respect to
+  !>                    the change int(dy)dt in input to controller.
+  !>                    du/(int(dy)dt) = integral gain, Ki.
+  !> - du/(dy/dt): The change du in output from controller with respect to
+  !>               the change dy/dt in input to controller.
+  !>               du/(dy/dt) = derivative gain, Kd.
+  !>
+  !> Working order:
+  !> -# Do an initial perturbation on the controller with dy = 0 and dt &ne; 0.
+  !>    This is to insure dy/dt = 0.
+  !> -# Get the initial values y0 and u0 for the controller.
+  !> -# Establish dy(j) and dt(j). j = number of perturbations.
+  !>    For a PID-controller: j = 1...3.
+  !> -# Calculate d(int(dy(j))dt) and d(dy/dt).
+  !> -# Calculate y(j) and t(j).
+  !> -# Iterate the controller with these new values for the input y(j)
+  !>    and time t(j) and save the reaction from the controller u(j)
+  !>    due to the change in the input.
+  !> -# Calculate du(j) based on u0 and u(j).
+  !> -# Calculate Kp, Ki and Kd.
+  !> -# Based on sensor type (position, velocity or acceleration),
+  !>    calculate Q, K, C and M.
+  !>
+  !> @callgraph @callergraph
+  !>
+  !> @author Magne Bratland
+  !>
+  !> @date 25 Nov 2010
+
   subroutine EstimateControllerProperties01 (sys, ctrl, msim, &
        &                                     whichVregIn, whichVregOut, &
        &                                     ctrlProps, ierr)
-
-    !!==========================================================================
-    !! Purpose:
-    !! Use a perturbation method, simular to the Matrix Stiffness Method /
-    !! (Virtual) Displacement Method / Unit Load Method to find
-    !! the equivalent mechanical properties of the controller. These controller properties
-    !! will be added to existing matrices when conducting modal analysis / eigenvalue analysis.
-    !! In this routine, the controller is limited to be of type PID.
-    !! The equation for the system is:
-    !! M*x'' + C*x' + K*x + Q*int(x)dt = F or M*(d2x/dt2) + C*(dx/dt) + K*X + Q*int(x)dt = F
-    !! where M is mass, C is damping, K is stiffness and Q is steady state error elimination
-    !! Controller input = y, controller output = u.
-    !! The values of interest are:
-    !! du/dy: Change du in output from controller with respect to
-    !!        change dy in input to controller.
-    !!        du/dy = proportional gain, Kp
-    !! du/(int(dy)dt): Change du in output from controller with respect to
-    !!                 change int(dy)dt in input to controller.
-    !!                 du/(int(dy)dt) = integral gain, Ki
-    !! du/(dy/dt): Change du in output from controller with respect to
-    !!             change dy/dt in input to controller.
-    !!             du/(dy/dt) = derivative gain, Kd
-    !!
-    !! Working order:
-    !! 1) Do one initial perturbation on the controller with dy = 0 and dt /= 0.
-    !!    This is to insure dy/dt = 0.
-    !! 2) Get the initial values y0 and u0 for the controller.
-    !! 3) Establish dy(j) and dt(j). j = number of perturbations.
-    !!    For a PID-controller: j = 1...3.
-    !! 4) Calculate d(int(dy(j)dt) and d(dy/dt).
-    !! 5) Calculate y(j) and t(j).
-    !! 6) Iterate the controller with these new values for the input y(j) and time t(j)
-    !!    and save the reaction from the controller u(j) due to the change in the input.
-    !! 7) Calculate du(j) based on u0 and u(j).
-    !! 8) Calculate Kp, Ki and Kd.
-    !! 9) Based on sensor type (position, velocity or acceleration), calculate Q, K, C and M.
-    !!
-    !! Programmer : Magne Bratland
-    !! date/rev   : 25 Nov 2010 / 1.0
-    !!==========================================================================
 
     use SystemTypeModule , only : SystemType, dp
     use ControlTypeModule, only : ControlType, copyCtrl
@@ -779,42 +811,30 @@ contains
     use ReportErrorModule, only : allocationError, reportError
     use ReportErrorModule, only : debugFileOnly_p
 
-    type(SystemType)   , intent(inout) :: sys
-    type(ControlType)  , intent(in)    :: ctrl
-    integer            , intent(in)    :: msim(:)
-    integer,             intent(in)    :: whichVregIn(:)    !! Which vreg in to perturb
-    integer,             intent(in)    :: whichVregOut(:)   !! Which vreg out to read variation from
-    real(dp),            intent(out)   :: ctrlProps(:,:,:)  !! table for storing controller properties
-    !						  		                        !!(no. of outputs from controller,
-    !				 				                        !! no. of controller properties,
-    !		   			   			                        !! no. of inputs to controller)
-    !                                                       !! ctrlProps(:,1,:) = Q
-    !                                                       !! ctrlProps(:,2,:) = K
-    !                                                       !! ctrlProps(:,3,:) = C
-    !                                                       !! ctrlProps(:,4,:) = M
+    type(SystemType) , intent(inout) :: sys
+    type(ControlType), intent(in)    :: ctrl
+    integer          , intent(in)    :: msim(:), whichVregIn(:), whichVregOut(:)
+    real(dp)         , intent(out)   :: ctrlProps(:,:,:)
+    integer          , intent(out)   :: ierr
 
-    integer            , intent(inout) :: ierr
-
-    ! Local variables
+    !! Local variables
 
     integer, parameter :: nPerturb = 3 !< Number of controller perturbations
 
     type(ControlType), pointer :: ctrlCopy => null()
     type(ControlType), pointer :: ctrlCopyCopy => null()
 
-    real(dp) :: orgTime                          !! original/initial value for the time
-    real(dp) :: orgTimeStep                      !! original/initial value for the time step
-    real(dp) :: dt0                              !! quazi-initial time step
-    real(dp) :: dt                               !! incremental time step
-    real(dp) :: dy                               !! incremental controller input step
-    real(dp) :: dintydt                          !! definite integral of y with respect to time
-    real(dp) :: y0                               !! initial values of the controller inputs
-    real(dp), allocatable :: uy0(:)              !! u(y0), output from controller when input is y0
-    real(dp), allocatable :: uy(:)               !! u(y), output from controller when input is y = y0+dy
-    real(dp) :: dyMatrix(nPerturb,nPerturb)      !! matrix of perturbation parameters
-    real(dp), allocatable :: duTable(:,:)        !! table for storing du = u(y)-u(y0)
+    real(dp) :: orgTime, orgTimeStep !< original time and timestep values
+    real(dp) :: dt0, dt              !< quazi-initial and incremental time steps
+    real(dp) :: dy                   !< incremental controller input step
+    real(dp) :: dintydt              !< integral of y with respect to time
+    real(dp) :: y0                   !< initial values of the controller inputs
+    real(dp), allocatable :: uy0(:)  !< controller output when input is y0
+    real(dp), allocatable :: uy(:)   !< controller output when input is y=y0+dy
+    real(dp) :: dyMatrix(nPerturb,nPerturb) !< matrix of perturbation parameters
+    real(dp), allocatable :: duTable(:,:)   !< table for storing du = u(y)-u(y0)
 
-    integer :: i, j, iInput, numVregIn, numVregOut
+    integer :: i, j, iInput, numVregIn, numVregOut, stat
 
     !! --- Logic section ---
 
@@ -837,6 +857,7 @@ contains
     dt0 = orgTimeStep*0.1_dp   !! TODO Magne: Change this value?
     sys%time = orgTime + dt0
 
+    stat = 0
     do i = 1, numVregIn
        iInput = whichVregIn(i)
 
@@ -884,17 +905,21 @@ contains
           ctrlProps(:,1,i) = duTable(1,:)
           ctrlProps(:,2,i) = duTable(2,:)
           ctrlProps(:,3,i) = duTable(3,:)
+          stat = IOR(stat,1+2+4)
        case (VEL_p) ! find dintydt(j), dy(j), ddydt(j)
           ctrlProps(:,2,i) = duTable(1,:)
           ctrlProps(:,3,i) = duTable(2,:)
           ctrlProps(:,4,i) = duTable(3,:)
+          stat = IOR(stat,2+4+8)
        case (ACC_p) ! find dintydt(j), dy(j)
           ctrlProps(:,3,i) = duTable(1,:)
           ctrlProps(:,4,i) = duTable(2,:)
+          stat = IOR(stat,4+8)
        case default
           !! Error
        end select
     end do
+    ierr = stat
 
 900 continue
 
