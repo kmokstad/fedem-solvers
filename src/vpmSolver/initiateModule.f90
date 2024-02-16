@@ -47,6 +47,9 @@ contains
     use SystemTypeModule     , only : SystemType
     use ControlTypeModule    , only : ControlType, NullifyCtrl
     use ControlTypeModule    , only : ReadControlSystem
+#ifdef FT_HAS_EXTCTRL
+    use ExtCtrlSysTypeModule , only : ReadExtCtrlSysInfo
+#endif
     use MechanismTypeModule  , only : MechanismType, NullifyMechanism
     use MechanismTypeModule  , only : ReadMechanism
     use EnvironmentTypeModule, only : ReadEnvironment, InitiateEnvironment
@@ -299,8 +302,13 @@ contains
     call InitiateSensors (infp,sys,mech,mech%sensors,err)
     if (err /= 0) goto 990
 
-    call ReadControlSystem (infp,mech%engines,mech%sensors,ctrl,err)
+    call ReadControlSystem (infp,mech%engines,ctrl,err)
     if (err /= 0) goto 990
+
+#ifdef FT_HAS_EXTCTRL
+    call ReadExtCtrlSysInfo (infp,mech%engines,mech%sensors,ctrl%extCtrlSys,err)
+    if (err /= 0) goto 990
+#endif
 
     call ReadTurbineConfig (infp,mech%env,mech%turbine, &
          &                  mech%triads,mech%sups,mech%joints,err)
