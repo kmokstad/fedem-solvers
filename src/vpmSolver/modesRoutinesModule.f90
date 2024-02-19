@@ -377,20 +377,29 @@ contains
              exit
           end if
           work(i) = alphaR(i)
+       else if (beta(i) <= -epsDiv0_p) then
+          write(io,"(' *** Eigenvalue #',I6,' is invalid, beta = ',1PE13.5)") &
+               i, beta(i)
+          work(i) = 0.0_dp
+          indx(i) = N+1
+          ierr = ierr - 1
        else if (beta(i) < epsDiv0_p) then
-          write(io,"(' *** Eigenvalue #',I6,'  is infinite!')") i
+          write(io,"(' *** Eigenvalue #',I6,' is infinite (ignored)')") i
           work(i) = 0.0_dp
           indx(i) = N+1
        else if (abs(alphaI(i)) > epsDiv0_p) then
-          write(io,"(' *** Eigenvalue #',I6,'  is complex!')") i
+          write(io,"(' *** Eigenvalue #',I6,' is complex, alphaI =',1PE13.5)") &
+               i, alphaI(i)
           work(i) = 0.0_dp
           indx(i) = N+1
+          ierr = ierr - 1
        else
           work(i) = alphaR(i)/beta(i)
        end if
        wmax = max(wmax,work(i))
     end do
     work(N+1) = wmax+wmax
+    if (ierr < 0) goto 915
 
     !! Sort the modes in ascending order of eigenfrequency
     call bubbelSort (work,indx)
@@ -480,8 +489,14 @@ contains
     wmax = 1.0_dp
     do i = 1, N
        indx(i) = i
-       if (beta(i) < epsDiv0_p) then
-          write(io,"(' *** Eigenvalue #',I6,'  is infinite!')") i
+       if (beta(i) <= -epsDiv0_p) then
+          write(io,"(' *** Eigenvalue #',I6,' is invalid, beta=',1PE13.5)") &
+               i, beta(i)
+          work(i) = 0.0_dp
+          indx(i) = N+1
+          ierr = ierr - 1
+       else if (beta(i) < epsDiv0_p) then
+          write(io,"(' *** Eigenvalue #',I6,' is infinite (ignored)')") i
           work(i) = 0.0_dp
           indx(i) = N+1
        else if (abs(alphaI(i)) < epsDiv0_p) then
@@ -551,6 +566,11 @@ contains
                 write(io,6000) nmod, 1.0_dp, &
                      &        -reVal*2.0_dp, reVal*reVal, &
                      &         rcondE(j), rcondV(j)
+#ifdef FT_DEBUG
+             else
+                write(io,"('   * Real mode',20X,2I6,1P3E13.5)") &
+                     &      i, j, reVal, rcondE(j), rcondV(j)
+#endif
              end if
           end if
           k = 0
@@ -575,6 +595,11 @@ contains
              write(io,6000) nmod, 1.0_dp, &
                   &        -reVal*2.0_dp, reVal*reVal + imVal*imVal, &
                   &         rcondE(j), rcondV(j)
+#ifdef FT_DEBUG
+          else
+             write(io,"('   * Complex mode',17X,2I6,1P2E13.5,'*i ',2E13.5)") &
+                  &      i, j, reVal, imVal, rcondE(j), rcondV(j)
+#endif
           end if
 
        else if (modes%ImVal(nmod) < 0.0_dp) then
@@ -982,9 +1007,16 @@ contains
        end if
 #ifdef FT_DEBUG
        if (iprint == -99) then
-          write(io,"(/'Mode   alphaR       alphaI         beta')")
+          write(io,600)
+600       format(/'Mode   alphaR       alphaI         beta', &
+               &  '       Re(eigval)   Im(eigval)')
           do j = 1, N
-             write(io,"(I4,1P3E13.5)") j, alphaR(j), alphaI(j), beta(j)
+             if (beta(j) > 1.0e-16_dp) then
+                write(io,"(I4,1P5E13.5)") j, alphaR(j), alphaI(j), beta(j), &
+                     &                    alphaR(j)/beta(j), alphaI(j)/beta(j)
+             else
+                write(io,"(I4,1P3E13.5)") j, alphaR(j), alphaI(j), beta(j)
+             end if
           end do
        end if
 #endif
