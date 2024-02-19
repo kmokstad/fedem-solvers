@@ -505,11 +505,11 @@ contains
 
     case (JOINT_VARIABLE_p)
 
-       sGrad(sensor%dof) = eGrad
+       sGrad(1) = eGrad
 
     case (ENGINE_p)
 
-       sGrad(sensor%dof) = eGrad * EngineRate(argPtr%q,ierr,xArg)
+       sGrad(1) = eGrad * EngineRate(argPtr%q,ierr,xArg)
 
     case default
        ierr = internalError('SensorGradient: Unsupported sensor type '// &
