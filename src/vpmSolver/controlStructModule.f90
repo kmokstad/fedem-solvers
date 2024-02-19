@@ -1,19 +1,18 @@
-!! $Id$
+!! SPDX-FileCopyrightText: 2023 SAP SE
+!!
+!! SPDX-License-Identifier: Apache-2.0
+!!
+!! This file is part of FEDEM - https://openfedem.org
 !!==============================================================================
-!!
-!!    F E D E M    T E C H N O L O G Y    A S
-!!
-!!    Copyright (C)
-!!    1999, 2000, 2001, 2002, 2003, 2004, 2005, 2006, 2007, 2008
-!!    FEDEM Technology AS
-!!    all rights reserved
-!!
-!!    This is UNPUBLISHED PROPRIETARY SOURCE CODE of FEDEM Technology AS;
-!!    the contents of this file may not be disclosed to third parties,
-!!    copied or duplicated in any form, in whole or in part, without
-!!    the prior written permission of FEDEM Technology AS.
-!!
+
+!> @file controlStructModule.f90
+!> @brief Coupled control system and structure modal analysis.
+
 !!==============================================================================
+!> @brief Module with data types and subroutines for coupled modal analysis.
+!>
+!> @details This module contains some data types and associated subroutines for
+!> conducting coupled modal analysis of mechanim models with control systems.
 
 module ControlStructModule
 
@@ -23,42 +22,53 @@ module ControlStructModule
 
   implicit none
 
-  type StructSensorGradType
-     !!TODO,bh: Check if we need local dofstart for each node within sensorGrad_wrt_disp
-     integer                    :: iCin            !! Which cIn this sensor is connected to
-     !                                             !! j_index i.e. second (colum) index in Jacobi_CinToCout(:,:)
-     !                                             !! i_index i.e. first (row) index in Jacobi_SensorToCIn(:,:)
-     integer                    :: whichVreg       !! which VREG this is connected to (not necessarily equal to jIndex)
-     integer                    :: lNode(2)        !! Local node number for the element matrecies
-     integer                    :: dofStart(2)     !! Local dof start for this node
-     integer                    :: nDofs(2)        !! number of dofs for this node
-     type(CtrlPrm)    , pointer :: pCtrlPrm        !! pointer to the control parameter which has
-     !                                             !! structural input
-     type(SensorType),  pointer :: pSensor         !! The actual sensor pointer
 
-     !! ?? How to handle pos, vel, or accel ???
+  !> @brief Data type representing a control input gradient.
+  type StructSensorGradType
+     !> Which control input element this sensor is connected to.
+     !> - @a j_index i.e. second (column) index in Jacobi_CinToCout(:,:)
+     !> - @a i_index i.e. first (row) index in Jacobi_SensorToCIn(:,:)
+     integer :: iCin
+     !> Which VREG this is connected to (not necessarily equal to j_index)
+     integer :: whichVreg
+
+     integer :: lNode(2)    !< Local node number for the element matrices
+     integer :: dofStart(2) !< Local dof start for this node
+     integer :: nDofs(2)    !< number of dofs for this node
+
+     !> Pointer to the control parameter which has structural input
+     type(CtrlPrm)   , pointer :: pCtrlPrm
+     type(SensorType), pointer :: pSensor  !< Pointer to the actual sensor
   end type StructSensorGradType
 
 
+  !> @brief Data type representing a control output gradient.
   type ForceControlGradType
-     integer                  :: iCout           !! Which cOut this force is connected to
-     !                                           !! i_index (first)  index in Jacobi_CinToCout(:,:)
-     !                                           !! j_index (second) index in Jacobi_ForceToCout(:,:)
-     integer                  :: whichVreg       !! which VREG this is connected to (not necessarily equal to jIndex)
-     integer                  :: lNode           !! Local node number for the element matrecies
-     integer                  :: dofStart        !! Local dof start for this node
-     integer                  :: nDofs           !! number of dofs for this node
-     type(ForceType), pointer :: pForce          !! pointer to force with control out as input
+     !> Which control output element this force is connected to
+     !> - @a i_index (first)  index in Jacobi_CinToCout(:,:)
+     !> - @a j_index (second) index in Jacobi_ForceToCout(:,:)
+     integer :: iCout
+     !> which VREG this is connected to (not necessarily equal to j_index)
+     integer :: whichVreg
+
+     integer :: lNode    !< Local node number for the element matrices
+     integer :: dofStart !< Local dof start for this node
+     integer :: nDofs    !< number of dofs for this node
+
+     !> Pointer to the force with the control output as force magnitude
+     type(ForceType), pointer :: pForce
   end type ForceControlGradType
 
+
+  !> @brief Data type representing the control-system/structure coupling.
   type ControlStructType
 
-     integer :: ctrlSysEigFlag
+     integer :: ctrlSysEigFlag !< Flag telling which perturbation method to use
 
-     integer :: samElNum
-     integer :: nDOFs
-     integer, pointer :: samMNPC(:)
-     integer, pointer :: local_MADOF(:)
+     integer :: samElNum !< Element number for SAM reference
+     integer :: nDOFs    !< Total number of DOFs in this element
+
+     integer, pointer :: samMNPC(:) !< Matrix of Nodal Point Correspondance
 
      !! CONTROL PERTURBATION
 
@@ -69,37 +79,158 @@ module ControlStructModule
      type(ForceControlGradType), pointer :: controlForces(:) !< Force side
 
 
-     !! The tangent matrecies
-     !! These must hav a lookup table to internal dofs from both input side (sensor) and output
-     !! (force) side where the input equal to output is properly handled (ie has the same dof).
-     !! The dimension of the matrecies are "Number of unique input and output dofs"
+     !! The tangent matrices.
+     !! These must have a lookup table to internal DOFs from both the input side
+     !! (sensor) and output side (force) where the case of the input being equal
+     !! to the output is properly handled (i.e., they have the same DOF).
+     !! The dimension of the matrices are "Number of unique inputs and outputs".
 
-     !! system equation: M*(d2x/dt2) + C*(dx/dt) + K*X + Q*int(x)dt = F
-     real(dp), pointer :: ctrlProps(:,:,:) !! table of controller properties
-     !                                     !!(no. of outputs from controller,
-     !                                     !! no. of controller properties,
-     !                                     !! no. of inputs to controller)
-     !                                     !! ctrlProps(:,1,:) = Q
-     !                                     !! ctrlProps(:,2,:) = K
-     !                                     !! ctrlProps(:,3,:) = C
-     !                                     !! ctrlProps(:,4,:) = M
-     real(dp), pointer :: massMat(:,:)     !! mass matrix M
-     real(dp), pointer :: dampMat(:,:)     !! damping matrix C
-     real(dp), pointer :: stiffMat(:,:)    !! stiffness matrix K
-     real(dp), pointer :: SSEEMat(:,:)     !! steady-state error elimination matrix Q
+     !> @brief Table of controller properties.
+     !> @details Dimension:
+     !> (no. of outputs from controller) *
+     !> (no. of controller properties) *
+     !> (no. of inputs to controller)
+     !> - @a ctrlProps(:,1,:) = @b Q
+     !> - @a ctrlProps(:,2,:) = @b K
+     !> - @a ctrlProps(:,3,:) = @b C
+     !> - @a ctrlProps(:,4,:) = @b M
+     real(dp), pointer :: ctrlProps(:,:,:)
 
-     real(dp), pointer :: Grad_CinWrtSensor(:,:) !! Dim (nCin,nDofs) Consists of rows of sensorGrad_wrt_disp
-     real(dp), pointer :: Grad_ForceWrtCout(:,:) !! Dim (nDofs,nCout) Consists of columns of forceGrad_wrt_cOut
+     !! System equation: M*(d2x/dt2) + C*(dx/dt) + K*X + Q*int(x)dt = F
+     real(dp), pointer :: massMat(:,:)  !< mass matrix @b M
+     real(dp), pointer :: dampMat(:,:)  !< damping matrix @b C
+     real(dp), pointer :: stiffMat(:,:) !< stiffness matrix @b K
+     real(dp), pointer :: SSEEMat(:,:)  !< steady-state error matrix @b Q
 
-     integer :: SSEEMatIsNonSymmetric
-     integer :: stiffMatIsNonSymmetric
-     integer :: dampMatIsNonSymmetric
-     integer :: massMatIsNonSymmetric
+     !> Rows of the sensor gradient matrix
+     real(dp), pointer :: Grad_CinWrtSensor(:,:) !< Dimension: (nCin,nDofs)
+     !> Columns of the force gradient matrix
+     real(dp), pointer :: Grad_ForceWrtCout(:,:) !< Dimension: (nDofs,nCout)
+
+     integer :: SSEEMatIsNonSymmetric  !< If .true., the @b Q matrix is nonsym.
+     integer :: stiffMatIsNonSymmetric !< If .true., the @b K matrix is nonsym.
+     integer :: dampMatIsNonSymmetric  !< If .true., the @b C matrix is nonsym.
+     integer :: massMatIsNonSymmetric  !< If .true., the @b M matrix is nonsym
 
   end type ControlStructType
 
 
+  !> @brief Standard routine for writing an object to file.
+  interface WriteObject
+     module procedure WriteControlStructType
+  end interface
+
+
 contains
+
+  !!============================================================================
+  !> @brief Standard routine for writing an object to io.
+  !>
+  !> @param[in] pCS Data for coupled control system and structure modal analysis
+  !> @param[in] io File unit number to write to
+  !> @param[in] complexity Indicates the amount of print
+  !>
+  !> @author Knut Morten Okstad
+  !>
+  !> @date 19 Feb 2024
+
+  subroutine WriteControlStructType (pCS,io,complexity)
+
+    use IdTypeModule     , only : getId
+    use manipMatrixModule, only : writeObject
+
+    type(ControlStructType), intent(in) :: pCS
+    integer                , intent(in) :: io
+    integer                , intent(in) :: complexity
+
+    !! Local variables
+    integer :: i
+
+    !! --- Logic section ---
+
+    write(io,"(/A/A)") 'Control-Structure coupling','{'
+
+    write(io,*) 'ctrlSysEigFlag =', pCS%ctrlSysEigFlag
+    write(io,*) 'samElNum       =', pCS%samElNum
+    write(io,*) 'nDOFs          =', pCS%nDOFs
+    if (associated(pCS%samMNPC)) then
+       write(io,*) 'samMNPC        =', pCS%samMNPC
+    end if
+    if (associated(pCS%whichVRegIn)) then
+       write(io,*) 'whichVRegIn    =', pCS%whichVRegIn
+    end if
+    if (associated(pCS%whichVRegOut)) then
+       write(io,*) 'whichVRegOut   =', pCS%whichVRegOut
+    end if
+
+    if (complexity > 1 .and. associated(pCS%structSensors)) then
+       do i = 1, size(pCS%structSensors)
+          call writeStructSensor (i,pCS%structSensors(i))
+       end do
+    end if
+    if (complexity > 1 .and. associated(pCS%controlForces)) then
+       do i = 1, size(pCS%controlForces)
+          call writeForceControl (i,pCS%controlForces(i))
+       end do
+    end if
+
+    if (complexity > 2 .and. associated(pCS%massMat)) then
+       write(io,"()")
+       call writeObject (pCS%massMat,io,'Mass matrix')
+    end if
+    if (complexity > 2 .and. associated(pCS%dampMat)) then
+       write(io,"()")
+       call writeObject (pCS%dampMat,io,'Damping matrix')
+    end if
+    if (complexity > 2 .and. associated(pCS%stiffMat)) then
+       write(io,"()")
+       call writeObject (pCS%stiffMat,io,'Stiffness matrix')
+    end if
+    if (complexity > 2 .and. associated(pCS%SSEEMat)) then
+       write(io,"()")
+       call writeObject (pCS%SSEEMat,io,'Steady-state error elimination matrix')
+    end if
+
+    write(io,"(A)") '}'
+
+  contains
+
+    !> @brief Writes out a controlstructmodule::structsensorgradtype object.
+    subroutine writeStructSensor (idx,ssg)
+      integer                   , intent(in) :: idx
+      type(StructSensorGradType), intent(in) :: ssg
+      write(io,"(/' Structural sensor',I3,I4)") idx, ssg%iCin
+      write(io,*) ' whichVreg  =', ssg%whichVreg
+      write(io,*) ' lNode      =', ssg%lNode
+      write(io,*) ' dofStart   =', ssg%dofStart
+      write(io,*) ' nDOFs      =', ssg%nDofs
+      if (associated(ssg%pCtrlPrm)) then
+         write(io,*) ' var        =',ssg%pCtrlPrm%var
+         if (associated(ssg%pCtrlPrm%engine)) then
+            write(io,*) ' engine(id) =', ssg%pCtrlPrm%engine%id%userId
+         end if
+      end if
+      if (associated(ssg%pSensor)) then
+         write(io,*) ' sensor(id) =', ssg%pSensor%id%userId
+      end if
+    end subroutine writeStructSensor
+
+    !> @brief Writes out a controlstructmodule::forcecontrolgradtype object.
+    subroutine writeForceControl (idx,fcg)
+      integer                   , intent(in) :: idx
+      type(ForceControlGradType), intent(in) :: fcg
+      write(io,"(/' Force control',I3,I4)") idx, fcg%iCout
+      write(io,*) ' whichVreg  =', fcg%whichVreg
+      write(io,*) ' lNode      =', fcg%lNode
+      write(io,*) ' dofStart   =', fcg%dofStart
+      write(io,*) ' nDOFs      =', fcg%nDofs
+      if (associated(fcg%pForce)) then
+         write(io,*) ' force(id)  =', fcg%pForce%id%userId
+      end if
+    end subroutine writeForceControl
+
+  end subroutine WriteControlStructType
+
 
   !!============================================================================
   !> @brief Initializes the control struct data type.
@@ -117,7 +248,7 @@ contains
     use ReportErrorModule         , only : allocationError
     use ReportErrorModule         , only : reportError, debugFileOnly_p
 
-    type(ControlStructType)   , intent(inout)      :: pCS
+    type(ControlStructType)   , intent(out)        :: pCS
     type(CtrlPrm)             , intent(in), target :: inputs(:)
     type(TriadType)           , intent(in), target :: triads(:)
     type(MasterSlaveJointType), intent(in), target :: joints(:)
@@ -132,9 +263,8 @@ contains
     type(StructSensorGradType), pointer :: pS
     type(ForceControlGradType), pointer :: pF
 
-    integer, allocatable :: lNode_from_SAM_node(:)
-    integer, allocatable :: iCin_from_allVreg(:)
-    integer, allocatable :: iCout_from_allVreg(:)
+    integer, allocatable :: lNode_from_SAM_node(:), local_MADOF(:)
+    integer, allocatable :: iCin_from_allVreg(:), iCout_from_allVreg(:)
     integer, pointer     :: tmpIdx(:)
 
     integer :: i, n, iCin, iCout, iSAM, nElNodes, whichVreg
@@ -219,9 +349,8 @@ contains
        pCS%whichVregIn(iCin)     = whichVreg
     end do
 
-
-    deallocate(iCin_from_AllVreg) !! done with this scratch table
-    deallocate(tmpIdx)            !! done with this scratch
+    !! Clean up some scratch space
+    deallocate(iCin_from_AllVreg,tmpIdx)
 
     !! FORCES side initialization
     !! Find the forces whose sensor is a controller variable
@@ -271,7 +400,7 @@ contains
 
     allocate(pCS%whichVregOut(numVregOut), STAT=ierr)
     if (ierr /= 0) then
-       ierr = allocationError('InitiateControlStruct 3')
+       ierr = allocationError('InitiateControlStruct 3a')
        return
     end if
 
@@ -284,13 +413,13 @@ contains
        pCS%whichVregOut(iCout)    = whichVreg
     end do
 
-    deallocate(iCout_from_AllVreg) !! done with this scratch table
-    deallocate(tmpIdx)
+    !! Clean up some scratch space
+    deallocate(iCout_from_AllVreg,tmpIdx)
 
     !! Count number of element nodes
     nElNodes = count(lNode_from_SAM_node > 0)
 
-    allocate(pCS%samMNPC(nElNodes), pCS%local_MADOF(nElNodes+1), STAT=ierr)
+    allocate(pCS%samMNPC(nElNodes), local_MADOF(nElNodes+1), STAT=ierr)
     if (ierr /= 0) then
        ierr = allocationError('InitiateControlStruct 4')
        return
@@ -308,9 +437,9 @@ contains
     end do
 
 
-    !! Set the local node association and dofStart for all the forces and sensors
+    !! Set the local node association and dofStart for all forces and sensors
 
-    pCS%local_MADOF = 0
+    local_MADOF = 0
     do i = 1, numStructCtrlParams
        pS => pCS%structSensors(i)
        pS%lNode    = 0
@@ -338,7 +467,7 @@ contains
        end select
 
        do n = 1, 2
-          if (pS%lNode(n) > 0) pCS%local_MADOF(pS%lNode(n)) = pS%nDOFs(n)
+          if (pS%lNode(n) > 0) local_MADOF(pS%lNode(n)) = pS%nDOFs(n)
        end do
     end do
 
@@ -356,34 +485,34 @@ contains
           pF%nDOFs = 0
        end if
 
-       if (pF%lNode > 0) pCS%local_MADOF(pF%lNode) = pF%nDOFs
+       if (pF%lNode > 0) local_MADOF(pF%lNode) = pF%nDOFs
     end do
-
-    !! Clean up some scratch space
-    deallocate(lNode_from_SAM_node)
 
     !! Now accumulate the dofStart and total number of dofs for this element
 
     pCS%nDOFs = 0
     do i = 1, nElNodes
-       n = pCS%local_MADOF(i)
-       pCS%local_MADOF(i) = pCS%nDOFs + 1
+       n = local_MADOF(i)
+       local_MADOF(i) = pCS%nDOFs + 1
        pCS%nDOFs = pCS%nDOFs + n
     end do
-    pCS%local_MADOF(nElNodes+1) = pCS%nDOFs + 1
+    local_MADOF(nElNodes+1) = pCS%nDOFs + 1
 
     !! Also store the dofStart in the forces and sensors
 
     do i = 1, numStructCtrlParams
        pS => pCS%structSensors(i)
-       if (pS%lNode(1) > 0 ) pS%dofStart(1) = pCS%local_MADOF(pS%lNode(1))
-       if (pS%lNode(2) > 0 ) pS%dofStart(2) = pCS%local_MADOF(pS%lNode(2))
+       if (pS%lNode(1) > 0) pS%dofStart(1) = local_MADOF(pS%lNode(1))
+       if (pS%lNode(2) > 0) pS%dofStart(2) = local_MADOF(pS%lNode(2))
     end do
 
     do i = 1, numControlForces
        pF => pCS%controlForces(i)
-       pCS%controlForces(i)%dofStart = pCS%local_MADOF(pF%lNode)
+       pCS%controlForces(i)%dofStart = local_MADOF(pF%lNode)
     end do
+
+    !! Clean up some scratch space
+    deallocate(lNode_from_SAM_node,local_MADOF)
 
     allocate(pCS%Grad_CinWrtSensor(numVregIn,pCS%nDofs), &
          &   pCS%Grad_ForceWrtCout(pCS%nDofs,numVregOut), &
@@ -746,6 +875,7 @@ contains
   !> - ctrlProps(:,2,:) = K
   !> - ctrlProps(:,3,:) = C
   !> - ctrlProps(:,4,:) = M
+  !> @param[out] ierr Error flag
   !>
   !> @details
   !> We use a perturbation method, simular to the Matrix Stiffness Method /
