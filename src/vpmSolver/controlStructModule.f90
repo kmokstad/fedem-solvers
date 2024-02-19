@@ -58,7 +58,6 @@ module ControlStructModule
      integer :: samElNum
      integer :: nDOFs
      integer, pointer :: samMNPC(:)
-     integer, pointer :: local_MADOF(:)
 
      !! CONTROL PERTURBATION
 
@@ -138,9 +137,8 @@ contains
     type(StructSensorGradType), pointer :: pS
     type(ForceControlGradType), pointer :: pF
 
-    integer, allocatable :: lNode_from_SAM_node(:)
-    integer, allocatable :: iCin_from_allVreg(:)
-    integer, allocatable :: iCout_from_allVreg(:)
+    integer, allocatable :: lNode_from_SAM_node(:), local_MADOF(:)
+    integer, allocatable :: iCin_from_allVreg(:), iCout_from_allVreg(:)
     integer, pointer     :: tmpIdx(:)
 
     integer :: i, n, iCin, iCout, iSAM, nElNodes, whichVreg
@@ -226,9 +224,8 @@ contains
        pCS%whichVregIn(iCin)     = whichVreg
     end do
 
-
-    deallocate(iCin_from_AllVreg) !! done with this scratch table
-    deallocate(tmpIdx)            !! done with this scratch
+    !! Clean up some scratch space
+    deallocate(iCin_from_AllVreg,tmpIdx)
 
     !! FORCES side initialization
     !! Find the forces whose sensor is a controller variable
@@ -290,15 +287,15 @@ contains
        pCS%whichVregOut(iCout)    = whichVreg
     end do
 
-    deallocate(iCout_from_AllVreg) !! done with this scratch table
-    deallocate(tmpIdx)
+    !! Clean up some scratch space
+    deallocate(iCout_from_AllVreg,tmpIdx)
 
     !! Count number of element nodes
     nElNodes = count(lNode_from_SAM_node > 0)
 
     !! Allocate MNPC and MADOF
 
-    allocate(pCS%samMNPC(nElNodes), pCS%local_MADOF(nElNodes+1), STAT=ierr)
+    allocate(pCS%samMNPC(nElNodes), local_MADOF(nElNodes+1), STAT=ierr)
     if (ierr /= 0) then
        ierr = allocationError('InitiateControlStruct 4')
        return
@@ -318,7 +315,7 @@ contains
 
     !! Set the local node association and dofStart for all the forces and sensors
 
-    pCS%local_MADOF = 0
+    local_MADOF = 0
     do i = 1, numStructCtrlParams
        pS => pCS%structSensors(i)
        pS%lNode    = 0
@@ -346,7 +343,7 @@ contains
        end select
 
        do n = 1, 2
-          if (pS%lNode(n) > 0) pCS%local_MADOF(pS%lNode(n)) = pS%nDOFs(n)
+          if (pS%lNode(n) > 0) local_MADOF(pS%lNode(n)) = pS%nDOFs(n)
        end do
     end do
 
@@ -364,33 +361,33 @@ contains
           pF%nDOFs = 0
        end if
 
-       if (pF%lNode > 0) pCS%local_MADOF(pF%lNode) = pF%nDOFs
+       if (pF%lNode > 0) local_MADOF(pF%lNode) = pF%nDOFs
     end do
-
-    !! Clean up some scratch space
-    deallocate(lNode_from_SAM_node)
 
     !! Now accumulate the dofStart and total number of dofs for this element
 
     pCS%nDOFs = 0
     do i = 1, nElNodes
-       n = pCS%local_MADOF(i)
-       pCS%local_MADOF(i) = pCS%nDOFs + 1
+       n = local_MADOF(i)
+       local_MADOF(i) = pCS%nDOFs + 1
        pCS%nDOFs = pCS%nDOFs + n
     end do
-    pCS%local_MADOF(nElNodes+1) = pCS%nDOFs + 1
+    local_MADOF(nElNodes+1) = pCS%nDOFs + 1
 
     !! Also store the dofStart in the forces and sensors
 
     do i = 1, numStructCtrlParams
        pS => pCS%structSensors(i)
-       if (pS%lNode(1) > 0 ) pS%dofStart(1) = pCS%local_MADOF(pS%lNode(1))
-       if (pS%lNode(2) > 0 ) pS%dofStart(2) = pCS%local_MADOF(pS%lNode(2))
+       if (pS%lNode(1) > 0) pS%dofStart(1) = local_MADOF(pS%lNode(1))
+       if (pS%lNode(2) > 0) pS%dofStart(2) = local_MADOF(pS%lNode(2))
     end do
 
     do i = 1, numControlForces
-       pCS%controlForces(i)%dofStart = pCS%local_MADOF(pF%lNode)
+       pCS%controlForces(i)%dofStart = local_MADOF(pF%lNode)
     end do
+
+    !! Clean up some scratch space
+    deallocate(lNode_from_SAM_node,local_MADOF)
 
     allocate(pCS%Grad_CinWrtSensor(pCS%numVregIn,pCS%nDofs), &
          &   pCS%Grad_CoutWrtCin(pCS%numVregOut,pCS%numVregIn), &
