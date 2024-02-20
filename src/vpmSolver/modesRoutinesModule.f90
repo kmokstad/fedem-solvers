@@ -876,10 +876,10 @@ contains
        write(io,"(/'=== Eigenvalue analysis at time =',1pe12.5)") sys%time
        write(io,"('TolEigval, TolFactor, TolEigvec =',1p3e12.5)") modes%tol
        if (associated(pCS)) call writeObject (pCS,io,5)
-       call writeObject (modes%Qmat,io,'Qmat in Eigenvalue analysis')
-       call writeObject (modes%Kmat,io,'Kmat in Eigenvalue analysis')
-       call writeObject (modes%Cmat,io,'Cmat in Eigenvalue analysis')
-       call writeObject (modes%Mmat,io,'Mmat in Eigenvalue analysis')
+       call writeObject (modes%Qmat,io,'Qmat in Eigenvalue analysis',12)
+       call writeObject (modes%Kmat,io,'Kmat in Eigenvalue analysis',12,3)
+       call writeObject (modes%Cmat,io,'Cmat in Eigenvalue analysis',12)
+       call writeObject (modes%Mmat,io,'Mmat in Eigenvalue analysis',12)
     end if
 #endif
 
