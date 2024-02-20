@@ -20,8 +20,8 @@ contains
   !!============================================================================
   !> @brief Initializes the eigenvalue solver.
   !>
-  !> @param sam Data for managing system matrix assembly
-  !> @param sys System level model data
+  !> @param[in] sam Data for managing system matrix assembly
+  !> @param[in] sys System level model data
   !> @param modes Data for eigenmodes
   !> @param[out] err Error flag
   !> @param[in] nModes Number of eigen modes to calculate
@@ -49,8 +49,8 @@ contains
     use FFaCmdLineArgInterface, only : ffa_cmdlinearg_getdouble
     use FFaCmdLineArgInterface, only : ffa_cmdlinearg_isTrue
 
-    type(SamType)   , intent(inout) :: sam
-    type(SystemType), intent(inout) :: sys
+    type(SamType)   , intent(in)    :: sam
+    type(SystemType), intent(in)    :: sys
     type(ModesType) , intent(inout) :: modes
     integer         , intent(out)   :: err
     integer,optional, intent(in)    :: nModes, eigSolver
@@ -108,21 +108,30 @@ contains
           else if (ffa_cmdlinearg_isTrue('undamped')) then
              modes%solver = 3 ! Using DGGEVX eigensolver for undamped systems
           else if (ffa_cmdlinearg_isTrue('2nStSp')) then
-             modes%solver = 4
+             modes%solver = 7 ! Using DGGEVX eigensolver for 2n state-space
           else if (ffa_cmdlinearg_isTrue('3nStSp')) then
-             modes%solver = 6
+             modes%solver = 6 ! Using DGGEVX eigensolver for 3n state-space
           end if
        end if
        if (sys%Nmat%storageType == skylineMatrix_p) then
           sys%Nmat%skyline%eigenSolver = modes%solver
        end if
 
-       !! Share system matrix datastructures
-       call shareMatrixStructure (modes%Kmat,sys%Nmat)
-       call shareMatrixStructure (modes%Cmat,sys%Nmat)
-       call shareMatrixStructure (modes%Mmat,sys%Nmat)
+       if (modes%solver >= 6) then
+          if (modes%solver == 7) modes%solver = 4
+          !! Use full matrices in eigensolver due to non-symmetry
+          modes%Kmat%storageType = denseMatrix_p
+          modes%Kmat%isShared = .true.
+          modes%Kmat%dim = sys%Nmat%dim
+          modes%Kmat%meqn => sys%Nmat%meqn
+       else
+          !! Share matrix datastructures with the system Newton matrix
+          call shareMatrixStructure (modes%Kmat,sys%Nmat)
+       end if
+       call shareMatrixStructure (modes%Cmat,modes%Kmat)
+       call shareMatrixStructure (modes%Mmat,modes%Kmat)
        if (modes%solver == 6) then
-          call shareMatrixStructure (modes%Qmat,sys%Nmat)
+          call shareMatrixStructure (modes%Qmat,modes%Kmat)
        end if
 
        !! Allocate system matrices for eigenvalue solver
