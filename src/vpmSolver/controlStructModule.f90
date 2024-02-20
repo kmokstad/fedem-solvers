@@ -23,6 +23,8 @@ module ControlStructModule
 
   implicit none
 
+
+  !> @brief Data type representing a control input gradient.
   type StructSensorGradType
      !!TODO,bh: Check if we need local dofstart for each node within sensorGrad_wrt_disp
      integer                    :: iCin            !! Which cIn this sensor is connected to
@@ -40,6 +42,7 @@ module ControlStructModule
   end type StructSensorGradType
 
 
+  !> @brief Data type representing a control output gradient.
   type ForceControlGradType
      integer                  :: iCout           !! Which cOut this force is connected to
      !                                           !! i_index (first)  index in Jacobi_CinToCout(:,:)
@@ -51,13 +54,16 @@ module ControlStructModule
      type(ForceType), pointer :: pForce          !! pointer to force with control out as input
   end type ForceControlGradType
 
+
+  !> @brief Data type representing the control-system/structure coupling.
   type ControlStructType
 
-     integer :: ctrlSysEigFlag
+     integer :: ctrlSysEigFlag !< Flag telling which perturbation method to use
 
-     integer :: samElNum
-     integer :: nDOFs
-     integer, pointer :: samMNPC(:)
+     integer :: samElNum !< Element number for SAM reference
+     integer :: nDOFs    !< Total number of DOFs in this element
+
+     integer, pointer :: samMNPC(:) !< Matrix of Nodal Point Correspondance
 
      !! CONTROL PERTURBATION
 
@@ -104,7 +110,123 @@ module ControlStructModule
   end type ControlStructType
 
 
+  !> @brief Standard routine for writing an object to file.
+  interface WriteObject
+     module procedure WriteControlStructType
+  end interface
+
+
 contains
+
+
+  !!============================================================================
+  !> @brief Standard routine for writing an object to io.
+  !>
+  !> @param[in] pCS Data for coupled control system and structure modal analysis
+  !> @param[in] io File unit number to write to
+  !> @param[in] complexity Indicates the amount of print
+  !>
+  !> @author Knut Morten Okstad
+  !>
+  !> @date 19 Feb 2024
+
+  subroutine WriteControlStructType (pCS,io,complexity)
+
+    use IdTypeModule     , only : getId
+    use manipMatrixModule, only : writeObject
+
+    type(ControlStructType), intent(in) :: pCS
+    integer                , intent(in) :: io
+    integer                , intent(in) :: complexity
+
+    !! Local variables
+    integer :: i
+
+    !! --- Logic section ---
+
+    write(io,"(/A/A)") 'Control-Structure coupling','{'
+
+    write(io,*) 'ctrlSysEigFlag =', pCS%ctrlSysEigFlag
+    write(io,*) 'samElNum       =', pCS%samElNum
+    write(io,*) 'nDOFs          =', pCS%nDOFs
+    if (associated(pCS%samMNPC)) then
+       write(io,*) 'samMNPC        =', pCS%samMNPC
+    end if
+    if (associated(pCS%whichVRegIn)) then
+       write(io,*) 'whichVRegIn    =', pCS%whichVRegIn
+    end if
+    if (associated(pCS%whichVRegOut)) then
+       write(io,*) 'whichVRegOut   =', pCS%whichVRegOut
+    end if
+
+    if (complexity > 1 .and. associated(pCS%structSensors)) then
+       do i = 1, size(pCS%structSensors)
+          call writeStructSensor (i,pCS%structSensors(i))
+       end do
+    end if
+    if (complexity > 1 .and. associated(pCS%controlForces)) then
+       do i = 1, size(pCS%controlForces)
+          call writeForceControl (i,pCS%controlForces(i))
+       end do
+    end if
+
+    if (complexity > 2 .and. associated(pCS%massMat)) then
+       write(io,"()")
+       call writeObject (pCS%massMat,io,'Mass matrix')
+    end if
+    if (complexity > 2 .and. associated(pCS%dampMat)) then
+       write(io,"()")
+       call writeObject (pCS%dampMat,io,'Damping matrix')
+    end if
+    if (complexity > 2 .and. associated(pCS%stiffMat)) then
+       write(io,"()")
+       call writeObject (pCS%stiffMat,io,'Stiffness matrix')
+    end if
+    if (complexity > 2 .and. associated(pCS%SSEEMat)) then
+       write(io,"()")
+       call writeObject (pCS%SSEEMat,io,'Steady-state error elimination matrix')
+    end if
+
+    write(io,"(A)") '}'
+
+  contains
+
+    !> @brief Writes out a controlstructmodule::structsensorgradtype object.
+    subroutine writeStructSensor (idx,ssg)
+      integer                   , intent(in) :: idx
+      type(StructSensorGradType), intent(in) :: ssg
+      write(io,"(/' Structural sensor',I3,I4)"), idx, ssg%iCin
+      write(io,*) ' whichVreg  =', ssg%whichVreg
+      write(io,*) ' lNode      =', ssg%lNode
+      write(io,*) ' dofStart   =', ssg%dofStart
+      write(io,*) ' nDOFs      =', ssg%nDofs
+      if (associated(ssg%pCtrlPrm)) then
+         write(io,*) ' var        =',ssg%pCtrlPrm%var
+         if (associated(ssg%pCtrlPrm%engine)) then
+            write(io,*) ' engine(id) =', ssg%pCtrlPrm%engine%id%userId
+         end if
+      end if
+      if (associated(ssg%pSensor)) then
+         write(io,*) ' sensor(id) =', ssg%pSensor%id%userId
+      end if
+    end subroutine writeStructSensor
+
+    !> @brief Writes out a controlstructmodule::forcecontrolgradtype object.
+    subroutine writeForceControl (idx,fcg)
+      integer                   , intent(in) :: idx
+      type(ForceControlGradType), intent(in) :: fcg
+      write(io,"(/' Force control',I3,I4)"), idx, fcg%iCout
+      write(io,*) ' whichVreg  =', fcg%whichVreg
+      write(io,*) ' lNode      =', fcg%lNode
+      write(io,*) ' dofStart   =', fcg%dofStart
+      write(io,*) ' nDOFs      =', fcg%nDofs
+      if (associated(fcg%pForce)) then
+         write(io,*) ' force(id)  =', fcg%pForce%id%userId
+      end if
+    end subroutine writeForceControl
+
+  end subroutine WriteControlStructType
+
 
   !!============================================================================
   !> @brief Initializes the control struct data type.
@@ -122,7 +244,7 @@ contains
     use ReportErrorModule         , only : allocationError
     use ReportErrorModule         , only : reportError, debugFileOnly_p
 
-    type(ControlStructType)   , intent(inout)      :: pCS
+    type(ControlStructType)   , intent(out)        :: pCS
     type(CtrlPrm)             , intent(in), target :: inputs(:)
     type(TriadType)           , intent(in), target :: triads(:)
     type(MasterSlaveJointType), intent(in), target :: joints(:)
@@ -276,7 +398,7 @@ contains
     !! Set which vreg in are to be read
     allocate(pCS%whichVregOut(pCS%numVregOut), STAT=ierr)
     if (ierr /= 0) then
-       ierr = allocationError('InitiateControlStruct 3')
+       ierr = allocationError('InitiateControlStruct 3a')
        return
     end if
 
@@ -293,8 +415,7 @@ contains
     !! Count number of element nodes
     nElNodes = count(lNode_from_SAM_node > 0)
 
-    !! Allocate MNPC and MADOF
-
+    !! Allocate MNPC and the local MADOF array
     allocate(pCS%samMNPC(nElNodes), local_MADOF(nElNodes+1), STAT=ierr)
     if (ierr /= 0) then
        ierr = allocationError('InitiateControlStruct 4')
@@ -313,7 +434,7 @@ contains
     end do
 
 
-    !! Set the local node association and dofStart for all the forces and sensors
+    !! Set the local node association and dofStart for all forces and sensors
 
     local_MADOF = 0
     do i = 1, numStructCtrlParams

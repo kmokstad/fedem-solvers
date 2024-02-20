@@ -23,7 +23,7 @@ module ModesRoutinesModule
   private
 
   !> @cond NO_DOCUMENTATION
-  !! Internal work arrays (undocumented)
+  !! Internal work arrays for LAPACK eigensolver (undocumented)
   integer , save              :: Lwork = 0, N = 0
   integer , save, allocatable :: indx(:), Iwork(:)
   logical , save, allocatable :: Bwork(:)
@@ -778,7 +778,7 @@ contains
     use SystemTypeModule   , only : SystemType
     use MechanismTypeModule, only : MechanismType
     use ControlTypeModule  , only : ControlType
-    use ControlStructModule, only : ControlStructType
+    use ControlStructModule, only : ControlStructType, writeObject
     use ControlStructModule, only : BuildStructControlJacobi
     use TriadTypeModule    , only : hasLocalDirections, transSysToGlob
     use AsmExtensionModule , only : csAddEM
@@ -867,6 +867,7 @@ contains
        io = getDBGfile(3,'modes.dbg')
        write(io,"(/'=== Eigenvalue analysis at time =',1pe12.5)") sys%time
        write(io,"('TolEigval, TolFactor, TolEigvec =',1p3e12.5)") modes%tol
+       if (associated(pCS)) call writeObject (pCS,io,5)
        call writeObject (modes%Qmat,io,'Qmat in Eigenvalue analysis')
        call writeObject (modes%Kmat,io,'Kmat in Eigenvalue analysis')
        call writeObject (modes%Cmat,io,'Cmat in Eigenvalue analysis')
@@ -896,7 +897,7 @@ contains
           goto 915
        end if
 
-       !! Solve the real symmetric eigenvalue problem
+       !! Solve the real symmetric eigenvalue problem using the LANCZOS solver
 
        if (modes%factorMass) then
           mip(6) = 2
@@ -1136,7 +1137,7 @@ contains
   !> mass-normalized, [M] is the compact mass matrix, and [R] is the influence
   !> matrix representing a rigid body unit displacement of the mechanism.
   !> Finally, [M_eff] is a nModes&times;6 matrix of the effective modal masses.
-  !> The results are stored in modestypemodule::modestype::effmass.
+  !> The results are stored in the array modestypemodule::modestype::effmass.
   !>
   !> @todo It works now for LANCZ2 and for the -undamped solvers (although I
   !> encountered something that looks like a bug in the -undamped calculation of
