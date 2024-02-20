@@ -27,7 +27,6 @@ module ModesTypeModule
 
      integer  :: solver !< Which eigensolver to use
      integer  :: nModes !< Number of eigenmodes to calculate
-     integer  :: maxLan !< Maximum number of Lanczos steps
      real(dp) :: shift  !< Shift value
      real(dp) :: tol(3) !< Tolerances for factorization and eigenvalues/vectors
      logical  :: addBC  !< .true. if the additional BCs should be applied
@@ -74,7 +73,6 @@ contains
 
     modes%solver = 0
     modes%nModes = 0
-    modes%maxLan = 0
     modes%shift  = 0.0_dp
     modes%tol    = 0.0_dp
     modes%addBC  = .false.

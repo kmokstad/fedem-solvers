@@ -155,13 +155,10 @@ contains
 
     end if
 
-    modes%maxLan = 3*modes%nModes + 12 ! Safe estimate (used by Lanczos only)
-    if (modes%addBC) then
-       if (modes%nModes > sam%ndof1) modes%nModes = sam%ndof1
-       if (modes%maxLan > sam%ndof1) modes%maxLan = sam%ndof1
-    else
-       if (modes%nModes > sam%neq)   modes%nModes = sam%neq
-       if (modes%maxLan > sam%neq)   modes%maxLan = sam%neq
+    if (modes%addBC .and. modes%nModes > sam%ndof1) then
+       modes%nModes = sam%ndof1
+    else if (modes%nModes > sam%neq) then
+       modes%nModes = sam%neq
     end if
 
     !! Allocate real eigenvalues and eigenvectors
