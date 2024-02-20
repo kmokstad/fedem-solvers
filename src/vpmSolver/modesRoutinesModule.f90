@@ -43,21 +43,22 @@ contains
   !>
   !> @param modes Eigenmode data container
   !> @param[in] neq Number of equations, i.e., dimension of system matrices
+  !> @param[in] neqEig Number of active equation during the eigenvalue analysis
   !> @param[out] ierr Error flag
   !>
   !> @callgraph @callergraph
 
-  subroutine allocEigenMatrices (modes,neq,ierr)
+  subroutine allocEigenMatrices (modes,neq,neqEig,ierr)
 
     use ModesTypeModule  , only : ModesType
     use reportErrorModule, only : AllocationError, InternalError
 
     type(ModesType)  , intent(inout) :: modes
-    integer, optional, intent(in)    :: neq
+    integer, optional, intent(in)    :: neq, neqEig
     integer, optional, intent(out)   :: ierr
 
     !! Local variables
-    integer  :: idum, jerr
+    integer  :: idum, jerr, maxLan
     real(dp) :: rdum, Nwork
 
     !! --- Logic section ---
@@ -107,7 +108,14 @@ contains
 
     if (modes%solver <= 2) then
 
-       allocate(alphaR(N),modes%eqVec(N,modes%maxlan),stat=jerr)
+       if (present(neqEig)) then
+          maxLan = neqEig
+       else
+          maxLan = neq
+       end if
+       maxLan = min(maxLan,12+3*modes%nModes) ! Safe upper bound
+
+       allocate(alphaR(N),modes%eqVec(N,maxLan),stat=jerr)
        if (jerr /= 0) goto 915
        return
 
@@ -891,7 +899,7 @@ contains
 
     if (modes%solver <= 2) then
 
-       call allocEigenMatrices (modes,sam%neq,ierr)
+       call allocEigenMatrices (modes,sam%neq,neqEig,ierr)
        if (ierr /= 0) then
           call stopTimer (eig_p)
           goto 915
