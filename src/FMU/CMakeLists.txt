@@ -19,10 +19,12 @@ endif ( FTENV_WARNINGS AND LINUX AND NOT USE_INTEL_FORTRAN )
 # Build and install
 
 include_directories ( "${CMAKE_CURRENT_SOURCE_DIR}/FMI2/headers" )
-add_library ( ${LIB_ID} SHARED fmu_template.C )
-add_dependencies ( all_solvers ${LIB_ID} )
+add_library ( ${LIB_ID}2 SHARED fmu2.C )
+include_directories ( "${CMAKE_CURRENT_SOURCE_DIR}/FMI3/headers" )
+add_library ( ${LIB_ID}3 SHARED fmu3.C )
+add_dependencies ( all_solvers ${LIB_ID}2 ${LIB_ID}3 )
 
 set ( CLOUD_DIR "${CMAKE_INSTALL_PREFIX}/bin/Templates/cloudsim" )
-install ( TARGETS ${LIB_ID}
+install ( TARGETS ${LIB_ID}2 ${LIB_ID}3
           RUNTIME DESTINATION "${CLOUD_DIR}"
           LIBRARY DESTINATION "${CLOUD_DIR}" )
