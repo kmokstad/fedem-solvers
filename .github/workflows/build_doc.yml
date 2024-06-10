@@ -1,0 +1,35 @@
+# SPDX-FileCopyrightText: 2023 SAP SE
+#
+# SPDX-License-Identifier: Apache-2.0
+#
+# This file is part of FEDEM - https://openfedem.org
+
+name: Build source code documentation
+
+on:
+  push:
+    branches:
+      - main
+
+jobs:
+  build-doc:
+    if: github.event.commits[0].author.name != 'github-actions'
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Check out source code repository
+        uses: actions/checkout@v3
+        with:
+          fetch-depth: 0
+          submodules: 'true'
+          token: ${{ secrets.ACCESS_PAT }}
+
+      - name: Build documentation
+        shell: bash
+        run: |
+          git config user.name github-actions
+          git config user.email github-actions@github.com
+          if ./.github/scripts/build_doc.sh then
+            git commit -m"Update solver source code documentations"
+            git push origin HEAD
+          fi
