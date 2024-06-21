@@ -21,11 +21,13 @@ module ElstressModule
 
   implicit none
 
+  !> @brief Real kind (precision) for recovery calculations
 #if FT_HAS_RECOVERY == 1
   integer , parameter :: rk = sp
 #else
   integer , parameter :: rk = dp
 #endif
+
   logical , parameter :: lStiffProj = .true.    !< Activate stiffness projection
   real(dp), parameter :: sqrt3_p = sqrt(3.0_dp) !< For Gauss-point extrapolation
 
@@ -396,6 +398,7 @@ contains
   end subroutine getElementData
 
 
+  !> @cond FULL_DOC
   !!****************************************************************************
   !> @brief Computes FE stresses and strains for a 2-noded beam element.
 
@@ -577,10 +580,10 @@ contains
     end if
 
     !! --- Compute the 2D stress transformation matrix
-    call getShellElementAxes (nenod,XG,YG,ZG,VX,VML,VZ,ierr)
+    call getShellElementAxes (nenod,XG,YG,ZG,VX,VML,VZ,LPU,ierr)
     if (ierr /= 0) return
 
-    call getShellStressTrans (VX,VZ,T_str,ierr)
+    call getShellStressTrans (VX,VZ,T_str,LPU,ierr)
     if (ierr /= 0) return
 
     !! --- Calculate stress resultants at the element center
@@ -707,11 +710,12 @@ contains
     end if
 
     !! Compute the global-to-local transformation matrix
-    call getShellElementAxes (nenod,XG,YG,ZG,T_el(1,:),T_el(2,:),T_el(3,:),ierr)
+    call getShellElementAxes (nenod,XG,YG,ZG,T_el(1,:),T_el(2,:),T_el(3,:), &
+         &                    LPU,ierr)
     if (ierr /= 0) return
 
     !! Compute the 2D stress transformation matrix
-    call getShellStressTrans (T_el(1,:),T_el(3,:),T_str,ierr)
+    call getShellStressTrans (T_el(1,:),T_el(3,:),T_str,LPU,ierr)
     if (ierr /= 0) return
 
     call ffa_cmdlinearg_getint ('ffqStressForm',stressForm)
@@ -948,10 +952,10 @@ contains
     end if
 
     !! --- Compute the 2D stress transformation matrix
-    call getShellElementAxes (nenod,XG,YG,ZG,VX,VML,VZ,ierr)
+    call getShellElementAxes (nenod,XG,YG,ZG,VX,VML,VZ,LPU,ierr)
     if (ierr /= 0) return
 
-    call getShellStressTrans (VX,VZ,T_str,ierr)
+    call getShellStressTrans (VX,VZ,T_str,LPU,ierr)
     if (ierr /= 0) return
 
     !! --- Calculate stress resultants at the element center
@@ -1065,11 +1069,12 @@ contains
     end if
 
     !! Compute the global-to-local transformation matrix
-    call getShellElementAxes (nenod,XG,YG,ZG,T_el(1,:),T_el(2,:),T_el(3,:),ierr)
+    call getShellElementAxes (nenod,XG,YG,ZG,T_el(1,:),T_el(2,:),T_el(3,:), &
+         &                    LPU,ierr)
     if (ierr /= 0) return
 
     !! Compute the 2D stress transformation matrix
-    call getShellStressTrans (T_el(1,:),T_el(3,:),T_str,ierr)
+    call getShellStressTrans (T_el(1,:),T_el(3,:),T_str,LPU,ierr)
     if (ierr /= 0) return
 
     !! Extrapolation from 2x2 Gauss points
@@ -1786,4 +1791,5 @@ contains
 
   end subroutine STR46
 
+  !> @endcond
 end module ElstressModule
