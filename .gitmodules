@@ -4,10 +4,10 @@
 
 [submodule "fedem-foundation"]
 	path = fedem-foundation
-	url = ../fedem-foundation.git
+	url = git@github.com:openfedem/fedem-foundation.git
 [submodule "SAM"]
 	path = SAM
-	url = ../sam-lib.git
+	url = git@github.com:openfedem/sam-lib.git
 [submodule "solverTests"]
 	path = solverTests
-	url = ../fedem-solver-tests.git
+	url = git@github.com:openfedem/fedem-solver-tests.git
