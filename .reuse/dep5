@@ -32,6 +32,10 @@ Files: src/FMU/FMI2/*
 Copyright: 2008-2011 MODELISAR consortium, 2012-2020 Modelica Association Project "FMI"
 License: BSD-2-Clause
 
+Files: src/FMU/FMI3/*
+Copyright: 2008-2011 MODELISAR consortium, 2012-2023 Modelica Association Project "FMI"
+License: BSD-2-Clause
+
 Files: src/FFTPack/fftpack5.1/* src/FFTPack/LICENSE
 Copyright: 2011 University Corporation for Atmospheric Research ("UCAR").
 License: BSD-1-Clause
