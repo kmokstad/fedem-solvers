@@ -398,7 +398,17 @@ C
       H2XY2 = 0.0
       H1X2Y = 0.0
       H2X2Y = 0.0
-      P    = TH*TH/(1.0-RNY)/5.0
+      H1XY3 = 0.0
+      H2XY3 = 0.0
+      H1X4 = 0.0
+      H1Y4 = 0.0
+      H2X4 = 0.0
+      H2Y4 = 0.0
+      H1X2Y2 = 0.0
+      H2X2Y2 = 0.0
+      H1X3Y = 0.0
+      H2X3Y = 0.0
+      P = 0.2D0*TH*TH/(1.0D0-RNY)
 C
       CALL CENTPO (AX,AY,AXY)
 C
@@ -431,8 +441,7 @@ C
 C
       IF (AREA .LE. 0)                 GO TO 903
 C
-      S    = 0.5*SQRT(AREA)
-      SI   = 1.0/S
+      SI   = 2.0D0/SQRT(AREA)
       SI2  = SI*SI
       SI3  = SI2*SI
       SI4  = SI3*SI
@@ -675,12 +684,9 @@ C     EXECUTABLE SECTION
 C----------------------------------------------------------------
 C
       IERR  = 0
+      P     = 0.2D0*TH*TH/(1.0D0-RNY)
 C
-      IF (ISHEAR .LE. 0)               GO TO  10
-C
-      P     = TH*TH/(1.0-RNY)/5.0
-C
-   10 DO 40 I = 1, 4
+      DO 40 I = 1, 4
 C
       X     = FXY(1,I)
       Y     = FXY(2,I)
@@ -757,7 +763,7 @@ C
       FG(I3-1,12)= H2Y
       FG(I3,12)  =-H2X
 C
-      IF (ISHEAR .LE. 0)               GO TO  20
+      IF (ISHEAR .LE. 0)               GO TO  40
 C
 C------------------------------------------------------------
 C     FORM THE PART OF THE MATRIX G CORRESPONDING TO SHEAR
@@ -771,8 +777,6 @@ C
       FG(I3,11)  = FG(I3,11)  - P*(H1X3  + H1XY2)
       FG(I3-1,12)= FG(I3-1,12)+ P*(H2X2Y + H2Y3 )
       FG(I3,12)  = FG(I3,12)  - P*(H2X3  + H2XY2)
-C
-   20 CONTINUE
 C
    40 CONTINUE
 C
@@ -795,9 +799,9 @@ C
       WRITE(LUNPRF,6100)
       CALL WRIMF2 (FH,12,12,LUNPRF)
 C
-C---------------------------------------------------------
+C-----------------------------------------------------------
 C     PUT THE H-MODE PART OF THE MATRIX H INTO THE MATRIX HH
-C---------------------------------------------------------
+C-----------------------------------------------------------
 C
    60 DO  70 I = 1,6
       DO  70 J = 1,12
@@ -918,7 +922,17 @@ C
       H2X2Y    = 0.0
       H1XY2    = 0.0
       H2XY2    = 0.0
-      P        = TH*TH/(1.0-RNY)/5.0
+      H1XY3    = 0.0
+      H2XY3    = 0.0
+      H1X4     = 0.0
+      H1Y4     = 0.0
+      H2X4     = 0.0
+      H2Y4     = 0.0
+      H1X2Y2   = 0.0
+      H2X2Y2   = 0.0
+      H1X3Y    = 0.0
+      H2X3Y    = 0.0
+      P        = 0.5D*TH*TH/(1.0D0-RNY)
 C
       IF (N .LE. 2)                    GO TO 20
 C
