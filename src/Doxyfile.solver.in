@@ -785,6 +785,7 @@ INPUT                   = ${PROJECT_BINARY_DIR} \
                           src/Femlib/beam.f src/Femlib/beamaux.f \
                           fedem-foundation/pFUnit/pFUnitExtraArg.f90 \
                           fedem-foundation/src/gtest.h \
+                          fedem-foundation/src/FFlLib/FFlLinkHandler_F.C \
                           fedem-foundation/src/FFrLib \
                           fedem-foundation/src/FFaLib/FFaAlgebra \
                           fedem-foundation/src/FFaLib/FFaCmdLineArg \
