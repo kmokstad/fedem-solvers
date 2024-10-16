@@ -86,6 +86,7 @@ jobs:
 
       - name: Check out source repository
         uses: actions/checkout@v4
+        with:
           fetch-depth: 0
           token: ${{ secrets.ACCESS_PAT }}
 
