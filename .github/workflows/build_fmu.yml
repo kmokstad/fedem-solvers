@@ -4,7 +4,7 @@
 #
 # This file is part of FEDEM - https://openfedem.org
 
-name: Regression testing
+name: Build and deploy FMU
 
 on:
   workflow_dispatch:
@@ -30,7 +30,7 @@ jobs:
       - name: Build FMU library
         run: cmake --build ./build --target fedem_fmu
 
-  build-linux:
+  build-win:
     name: Build FMU for Windows
 
     runs-on: windows-latest
