@@ -38,5 +38,4 @@ unset ( _MODULES CACHE )
 
 include ( FedemConfig )
 
-add_custom_target ( all_solvers )
 add_subdirectory ( ../src/FMU "${CMAKE_CURRENT_BINARY_DIR}/src" )
