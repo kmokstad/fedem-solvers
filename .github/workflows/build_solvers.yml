@@ -54,8 +54,8 @@ jobs:
       - name: Prepare release package
         run: |
           mkdir bin
-          find build/src -name '*.so' -exec cp -p {} bin/
-          find build/src -name 'fedem_*' -type f -exec cp -p {} bin/
+          find build/src -name '*.so' -exec cp -p {} bin/ \;
+          find build/src -name 'fedem_*' -type f -exec cp -p {} bin/ \;
           tar cfvz fedem-solvers-${{ env.MY_VER }}_linux64.tar.gz bin
           sed "1 s/.*$/Solver package for Fedem &/" cfg/RELEASE | tr '\n' ' ' > body.md
           sed "1 s/^.*\./(build /;s/.*$/&) for Linux 64-bit (Ubuntu)/" cfg/VERSION >> body.md
