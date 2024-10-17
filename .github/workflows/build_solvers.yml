@@ -62,10 +62,10 @@ jobs:
 
       - name: Build the fedempy module
         run: |
-          cd PythonAPI
-          python -m setup sdist
           sed "1 s/.*$/fedempy package for Fedem &/" cfg/RELEASE | tr '\n' ' ' >> body.md
           sed "1 s/^.*\./(build /;s/.*$/& and later)/" cfg/VERSION >> body.md
+          cd PythonAPI
+          python -m setup sdist
 
       - name: Create release
         uses: ncipollo/release-action@v1
