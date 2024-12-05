@@ -14,6 +14,9 @@ message ( STATUS "INFORMATION : Processing unit ${UNIT_ID}" )
 # Avoid that the generated module files are moved to the common folder
 unset ( CMAKE_Fortran_MODULE_DIRECTORY )
 
+# Need to use FFlLib classes in the FTK namespace
+string ( APPEND CMAKE_CXX_FLAGS " -DFT_KERNEL" )
+
 add_library ( ${LIB_ID} testModels.C )
 add_library ( ${LIB_ID}_F90 generate_system.f90
                         ../../../vpmReducer/samReducerModule.f90

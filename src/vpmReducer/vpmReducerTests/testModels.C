@@ -43,6 +43,10 @@
 #include "FFlLib/FFlFEParts/FFlPMAT.H"
 #include "FFlLib/FFlFEParts/FFlCLOAD.H"
 
+#ifdef FT_KERNEL
+using namespace FTK;
+#endif
+
 
 /*!
   \brief Creates an FE model of a cantilever beam with default properties.

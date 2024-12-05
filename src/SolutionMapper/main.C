@@ -30,6 +30,10 @@
 #include <iomanip>
 #include <cstring>
 
+#ifdef FT_KERNEL
+using namespace FTK;
+#endif
+
 extern void cmdLineArgInitStd(int argc, char** argv);
 extern void readOptionFilesStd(const char* program);
 

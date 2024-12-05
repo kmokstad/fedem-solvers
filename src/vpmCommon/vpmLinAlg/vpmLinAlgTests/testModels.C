@@ -32,6 +32,10 @@
 #include "FFlLib/FFlFEParts/FFlPMAT.H"
 #include "FFlLib/FFlFEParts/FFlPTHICK.H"
 
+#ifdef FT_KERNEL
+using namespace FTK;
+#endif
+
 
 /*!
   \brief Static helper generating a quadrilateral element in a regular mesh.

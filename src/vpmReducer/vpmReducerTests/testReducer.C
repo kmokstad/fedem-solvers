@@ -25,8 +25,7 @@
 
 #include "FFaLib/FFaCmdLineArg/FFaCmdLineArg.H"
 #include "FFaLib/FFaOS/FFaFortran.H"
-
-class FFlLinkHandler;
+#include "FFlLib/FFlPartHandler.H"
 
 //! \cond DO_NOT_DOCUMENT
 void cmdLineArgInit (int argc, char** argv);
@@ -36,7 +35,7 @@ int createFEModel (int iPart, int nels, int nel2,
                    bool twoD, bool solve = true);
 extern "C" int ffl_loadPart (const std::string& linkFile);
 void releaseSingeltons (bool lastPart = true);
-void ffl_setLink (FFlLinkHandler*);
+void ffl_setLink (FFlPartHandler*);
 
 SUBROUTINE (solver,SOLVER) (const int&, const int*, double*, int& iret);
 SUBROUTINE (reducer,REDUCER) (int& iret);
