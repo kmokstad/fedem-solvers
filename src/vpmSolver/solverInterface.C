@@ -148,6 +148,7 @@ DOUBLE_FUNCTION (slv_getfunction,SLV_GETFUNCTION) (int& ierr,
                                                    const int nchar);
 INTEGER_FUNCTION (slv_getfuncid,SLV_GETFUNCID) (const char* tag,
                                                 const int nchar);
+INTEGER_FUNCTION (slv_haveresults,SLV_HAVERESULTS) ();
 INTEGER_FUNCTION (slv_statesize,SLV_STATESIZE) (const int& posOnly);
 INTEGER_FUNCTION (slv_gagessize,SLV_GAGESSIZE) ();
 INTEGER_FUNCTION (slv_partsize,SLV_PARTSIZE) (const int& iop, const int& bid);
@@ -910,6 +911,12 @@ DLLexport(bool) solveWindow (const int nStep, int nInc, int nIn, int nOut,
   if (*ierr) releaseGlobalHeapObjects();
 
   return done == 0;
+}
+
+
+DLLexport(int) haveResults ()
+{
+  return F90_NAME(slv_haveresults,SLV_HAVERESULTS) ();
 }
 
 

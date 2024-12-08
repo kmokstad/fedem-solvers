@@ -158,6 +158,7 @@ class FedemSolver:
         self._solver.solverInit.restype = c_int
         self._solver.restartFromState.restype = c_int
         self._solver.solveWindow.restype = c_bool
+        self._solver.haveResults.restype = c_int
         self._solver.getStateSize.restype = c_int
         self._solver.getTransformationStateSize.restype = c_int
         self._solver.getPartDeformationStateSize.restype = c_int
@@ -492,6 +493,12 @@ class FedemSolver:
             outputs[:] = outputs_
 
         return outputs, not_done and success
+
+    def have_results(self):
+        """
+        Utility returning whether current time step have results to be saved.
+        """
+        return self._solver.haveResults()
 
     def get_state_size(self):
         """
