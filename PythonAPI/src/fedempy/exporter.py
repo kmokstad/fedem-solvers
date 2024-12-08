@@ -45,6 +45,8 @@ class Exporter:
         Absolute path to the shared object library vtfxExporter.so
     vtfx_path : str, default=None
         Absolute path to vtfx-file, use a temporary file if None
+    case_name : str, default="Case"
+        Case identifier
 
     Methods
     -------
@@ -54,13 +56,13 @@ class Exporter:
         Converts temporary generated vtfx-file to CUG database and cleans up
     """
 
-    def __init__(self, fe_parts, vis_parts, lib_path, vtfx_path=None):
+    def __init__(self, fe_parts, vis_parts, lib_path, vtfx_path=None, case_name="Case"):
         """
         Constructor.
         Initializes the internal datastructure of the shared object library,
         and loads the finite element and visualization parts into memory.
         """
-        self._initialize(lib_path, vtfx_path)
+        self._initialize(lib_path, vtfx_path, case_name)
         self._fem_parts = []
         self._vis_parts = []
 
@@ -168,7 +170,7 @@ class Exporter:
         elif out_dir:
             remove(self.vtfx_file_path)
 
-    def _initialize(self, lib_path, vtfx_path):
+    def _initialize(self, lib_path, vtfx_path, case_name):
         """
         Initialization
         """
@@ -176,7 +178,8 @@ class Exporter:
         self.lib_exporter.initialize(c_bool(False))
         self.vtfx_file_path = "/tmp/temp.vtfx" if vtfx_path is None else vtfx_path
         rc = self.lib_exporter.setVtfxPath(
-            c_char_p(self.vtfx_file_path.encode("utf-8"))
+            c_char_p(self.vtfx_file_path.encode("utf-8")),
+            c_char_p(case_name.encode("utf-8")),
         )
         if rc != 0:
             raise ExporterException(rc)

@@ -13,7 +13,6 @@ from ctypes import c_bool, c_char_p, c_int, cdll
 
 
 class FedemReducer:
-
     """
     This class mirrors the functionality of the Fedem FE part reducer library
     (libfedem_reducer_core.so on Linux, fedem_reducer_core.dll on Windows).
