@@ -15,7 +15,7 @@
 #include "FFlLib/FFlLinkHandler.H"
 #include "FFlLib/FFlIOAdaptors/FFlReaders.H"
 #include "FFlLib/FFlIOAdaptors/FFlFedemWriter.H"
-#include "FFlLib/FFlFEParts/FFlShellElementBase.H"
+#include "FFlLib/FFlFEParts/FFlShells.H"
 #include "FFlLib/FFlFEParts/FFlNode.H"
 #include "FFlLib/FFlElementBase.H"
 #include "FFaLib/FFaAlgebra/FFaMath.H"
@@ -29,6 +29,10 @@
 #include <fstream>
 #include <iomanip>
 #include <cstring>
+
+#ifdef FT_KERNEL
+using namespace FTK;
+#endif
 
 extern void cmdLineArgInitStd(int argc, char** argv);
 extern void readOptionFilesStd(const char* program);
