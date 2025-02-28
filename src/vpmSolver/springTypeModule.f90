@@ -79,6 +79,15 @@ module SpringTypeModule
      !>   - = 3 : Unloading with secant stiffness, both sides
      integer :: unLoadType
 
+     !> @brief Flag for stress-free length calculation.
+     !> @details The value has the following interpretation:
+     !>   - = 0 : A stress-free length change function is given
+     !>   - = 1 : A stress-free length velocity function is given
+     !>   - = 2 : A stress-free length acceleration function is given
+     !>
+     !> If @a motionType &gt; 0 the stress-free length is calculated using
+     integer :: motionType !< the Newmark update formulas.
+
      !> Stress-free length function
      type(EngineType), pointer :: length0Engine
      real(dp) :: l0 !< Constant stress-free length value
@@ -115,11 +124,14 @@ module SpringTypeModule
      logical  :: hasFailed !< Set to .true. when the spring has failed
      logical  :: isInYield !< Set to .true. when the spring is yielding
 
-     !> @brief Spring length.
+     !> @brief Current spring length.
      !> @details For joint springs, this pointer points to the
      !> corresponding joint variable. For axial springs it is allocated.
      real(dp), pointer :: length
      logical :: allocatedLength !< Set to .true. if the @a length is allocated
+
+     real(dp), pointer :: velocity     !< Current spring deflection velocity
+     real(dp), pointer :: acceleration !< Current spring deflection acceleration
 
      real(dp) :: lengthPrev     !< Length at previous time step
      real(dp) :: deflection     !< Current spring deflection
@@ -411,6 +423,7 @@ contains
 
     write(io,*) 'dof         =', spr%dof
     write(io,*) 'unLoadType  =', spr%unLoadType
+    write(io,*) 'motionType  =', spr%motionType
 
     if (associated(spr%length0Engine)) then
        write(io,*) 'length0Engine =', spr%length0Engine%id%baseId
@@ -475,15 +488,23 @@ contains
 
     if (present(complexity)) then
        if (complexity >= 2) then
-          write(io,*) 'force       =', spr%force
-          write(io,*) 'stiffness   =', spr%stiffness
-          if (associated(spr%length)) write(io,*) 'length      =', spr%length
-          write(io,*) 'length0     =', spr%length0
-          write(io,*) 'deflection  =', spr%deflection
-          write(io,*) 'yDeflection =', spr%yieldDeflection
-          write(io,*) 'Estr        =', spr%Estr
-          write(io,*) 'Einp        =', spr%Einp
-          write(io,*) 'Eyield      =', spr%Eyield
+          write(io,*) 'force        =', spr%force
+          write(io,*) 'stiffness    =', spr%stiffness
+          if (associated(spr%length)) then
+             write(io,*) 'length       =', spr%length
+          end if
+          write(io,*) 'length0      =', spr%length0
+          write(io,*) 'deflection   =', spr%deflection
+          write(io,*) 'yDeflection  =', spr%yieldDeflection
+          if (associated(spr%velocity)) then
+             write(io,*) 'velocity     =', spr%velocity
+          end if
+          if (associated(spr%acceleration)) then
+             write(io,*) 'acceleration =', spr%acceleration
+          end if
+          write(io,*) 'Estr         =', spr%Estr
+          write(io,*) 'Einp         =', spr%Einp
+          write(io,*) 'Eyield       =', spr%Eyield
        end if
     end if
 
@@ -691,6 +712,7 @@ contains
 
     spr%dof = -1
     spr%unLoadType = 0
+    spr%motionType = 0
     spr%isActive = .true.
     spr%hasFailed = .false.
     spr%isInYield = .false.
@@ -718,6 +740,8 @@ contains
     spr%deflectionPrev = 0.0_dp
     spr%yieldDeflection = 0.0_dp
     spr%yieldDeflectionPrev = 0.0_dp
+    nullify(spr%velocity)
+    nullify(spr%acceleration)
     spr%force          = 0.0_dp
     spr%forcePrev      = 0.0_dp
     spr%Estr           = 0.0_dp

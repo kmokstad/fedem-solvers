@@ -667,7 +667,7 @@ contains
        end if
 
        !! Initialize for new time step
-       call preEvaluate (mech%engines,ierr)
+       call preEvaluate (mech%engines,sys%timeStep,sys%beta,sys%gamma,ierr)
        call updateExternalForces (mech%forces,1,ierr)
        call PredictVelAcc (sys,mech%motions,iopAlg,ierr)
        if (ierr < 0) goto 915

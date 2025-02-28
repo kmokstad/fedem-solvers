@@ -519,13 +519,14 @@ contains
     character(ldesc_p) :: extDescr
     integer  :: id, extId(10), lengthEngineId, stiffFuncId, forceFuncId
     integer  :: stiffScaleEnginePosId, stiffScaleEngineNegId, saveVar(5)
-    integer  :: springFailureId, springYieldId, unLoadType
+    integer  :: springFailureId, springYieldId, unLoadType, motionType
     real(dp) :: l0, l1, s0, s1
     namelist /SPRING_BASE/ id, extId, extDescr, &
          &                 lengthEngineId, stiffFuncId, forceFuncId, &
          &                 l0, l1, s0, s1, &
          &                 stiffScaleEnginePosId, stiffScaleEngineNegId, &
-         &                 springFailureId, springYieldId, unLoadType, saveVar
+         &                 springFailureId, springYieldId, &
+         &                 unLoadType, motionType, saveVar
 
     !! --- Logic section ---
 
@@ -561,7 +562,7 @@ contains
        id=0; extId=0; extDescr=''
        lengthEngineId=0; stiffFuncId=0; forceFuncId=0
        stiffScaleEnginePosId=0; stiffScaleEngineNegId=0
-       springFailureId=0; springYieldId=0; unLoadType=0
+       springFailureId=0; springYieldId=0; unLoadType=0; motionType=0
        l0=0.0_dp; l1=0.0_dp; s0=0.0_dp; s1=0.0_dp; saveVar=0
 
        read(infp,nml=SPRING_BASE,iostat=stat)
@@ -585,6 +586,8 @@ contains
           err = err - 1
           call ReportInputError ('SPRING_BASE',idIn,springs(idIn)%id)
           cycle
+       else if (associated(springs(idIn)%length0Engine)) then
+          springs(idIn)%motionType = motionType
        end if
 
        !! Connect to failure criterion, if any

@@ -28,7 +28,7 @@
 
 module EngineRoutinesModule
 
-  use FunctionTypeModule   , only : EngineType
+  use FunctionTypeModule   , only : EngineType, dp
   use TriadTypeModule      , only : TriadType
   use SpringTypeModule     , only : SpringBaseType
   use DamperTypeModule     , only : DamperBaseType
@@ -49,6 +49,10 @@ module EngineRoutinesModule
   type(SpringBaseType), save, private, pointer :: springs(:) => null()
   !> @copydoc engineroutinesmodule::engines
   type(DamperBaseType), save, private, pointer :: dampers(:) => null()
+
+  real(dp), save, private :: dt    !< Time step size
+  real(dp), save, private :: beta  !< Newmark time integration parameter
+  real(dp), save, private :: gamma !< Newmark time integration parameter
 
   !> Flag used for consistent right-hand-side calculation in the predictor step.
   logical, save :: isPredictorStep = .false. !< Equals .true. in first iteration
@@ -100,11 +104,16 @@ contains
   !> @brief Pre-evaluation of general functions.
   !>
   !> @param engines All general functions in the model
+  !> @param[in] h Time step size
+  !> @param[in] b Newmark time integration parameter, &beta;
+  !> @param[in] c Newmark time integration parameter, &gamma;
   !> @param ierr Error flag
   !>
   !> @details This subroutine pre-evaluates all functiontypemodule::enginetype
   !> objects that have been flagged for it. It is used in the case that the
   !> order of evaluation matters, in particular for user-defined functions.
+  !> It also initializes the Newmark parameters, used for integrating the
+  !> stress-free length change from given velocity or acceleration.
   !>
   !> @callgraph @callergraph
   !>
@@ -112,12 +121,12 @@ contains
   !>
   !> @date 6 Feb 2015
 
-  subroutine preEvaluate (engines,ierr)
+  subroutine preEvaluate (engines,h,b,c,ierr)
 
-    use kindModule             , only : dp
     use explicitFunctionsModule, only : USER_DEFINED_p
 
     type(EngineType), intent(inout) :: engines(:)
+    real(dp)        , intent(in)    :: h, b, c
     integer         , intent(inout) :: ierr
 
     !! Local variables
@@ -125,6 +134,10 @@ contains
     real(dp) :: f
 
     !! --- Logic section ---
+
+    dt = h
+    beta = b
+    gamma = c
 
     do i = 1, size(engines)
        if (associated(engines(i)%func)) then
@@ -866,7 +879,7 @@ contains
 
     !! Local variables
     integer  :: lerr
-    real(dp) :: scale
+    real(dp) :: scale, dis, vel, acc
 
     !! --- Logic section ---
 
@@ -880,6 +893,7 @@ contains
     end if
 
     lerr = ierr
+    dis  = spr%length0
 
     !! Get the engine value for the stress free length
     if (associated(spr%length0Engine)) then
@@ -894,10 +908,27 @@ contains
        return
     end if
 
-    !! Evaluate the spring deflection, force and stiffness
-    spr%deflection = spr%length - spr%length0
-    spr%force      = springForce(spr,spr%deflection-spr%yieldDeflection,ierr)
-    spr%stiffness  = springStiff(spr,spr%deflection-spr%yieldDeflection,ierr)
+    if (spr%motionType > 0) then
+       dis = spr%length0 - dis
+       vel = spr%velocity
+       acc = spr%acceleration
+    end if
+
+    !! Evaluate the spring deflection
+    select case (spr%motionType)
+    case (1) ! Stress-free velocity is given, integrate deflection
+       spr%deflection = (vel + acc*dt*(0.5_dp-beta/gamma) + dis*beta/gamma)*dt
+       spr%length0    = spr%length + spr%deflection
+    case (2) ! Stress-free acceleration is given, integrate deflection
+       spr%deflection = (vel + acc*dt*0.5_dp + dis*dt*beta)*dt
+       spr%length0    = spr%length + spr%deflection
+    case default ! Stress-free length is given, calculate deflection
+       spr%deflection = spr%length - spr%length0
+    end select
+
+    !! Evaluate the spring force and stiffness
+    spr%force     = springForce(spr,spr%deflection-spr%yieldDeflection,ierr)
+    spr%stiffness = springStiff(spr,spr%deflection-spr%yieldDeflection,ierr)
     if (ierr < lerr) return
 
     !! Possible scaling of the stiffness and force
