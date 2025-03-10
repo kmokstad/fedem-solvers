@@ -76,7 +76,7 @@ contains
           if (ip > 0) then
              jVar = motions(ip)%D
           else if (fromPrevious) then
-             jVar = joints(i)%jointDofs(j)%jVarPrev &
+             jVar = joints(i)%jointDofs(j)%jVarPrev(1) &
                   + inc(joints(i)%jointDofs(j)%sysDof)
           else
              jVar = jVar + inc(joints(i)%jointDofs(j)%sysDof)

@@ -1972,7 +1972,7 @@ contains
       use MasterSlaveJointTypeModule, only : JointDofType
       type(JointDofType), intent(in)    :: jDof
       integer           , intent(inout) :: idat
-      data(idat) = jDof%jVarPrev
+      data(idat) = jDof%jVarPrev(1)
       data(idat+1:idat+3) = jDof%jVar
       idat = idat + 4
       if (associated(jDof%friction)) then

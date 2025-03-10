@@ -44,66 +44,69 @@ module MasterSlaveJointTypeModule
 
 
   type JMTriadType
-     type(TriadType), pointer :: triad        ! This is the master triad
-     real(dp)       , pointer :: JPosInT(:,:) ! Relative joint position
-     integer                  :: nDOFs        ! <= 3 for AXIAL_p, else <= 6
-     integer                  :: ipMceq       ! Index in mceq for master
-     real(dp)                 :: TR(3,3)      ! Translation-Rotation coupling
+     type(TriadType), pointer :: triad        !< This is the master triad
+     real(dp)       , pointer :: JPosInT(:,:) !< Relative joint position
+     integer                  :: nDOFs        !< &le; 3 for AXIAL_p, else &le; 6
+     integer                  :: ipMceq       !< Index in mceq for master
+     real(dp)                 :: TR(3,3)      !< Translation-Rotation coupling
   end type JMTriadType
 
 
   type SlaveDofType
-     real(dp), pointer :: tcc(:)  ! Table of Constraint equation Coefficients
-     integer , pointer :: mceq(:) ! mceq(1) is global DOF of current slave DOF
+     real(dp), pointer :: tcc(:)  !< Table of Constraint equation Coefficients
+     integer , pointer :: mceq(:) !< mceq(1) is global DOF of current slave DOF
   end type SlaveDofType
 
 
   type JointDofType
-     integer  :: iMat       !! Which position matrix this DOF is associated with
-     integer  :: lDOF       !! Which DOF (1-6) within the position matrix
-     integer  :: sysDOF     !! System DOF number in SAM
-     integer  :: ipMceq     !! Position of this master DOF in mceq
-     integer  :: loadIdx    !! Index to load/prescribed motion, if any
-     logical  :: fixed      !! Is this dof fixed? Needed for save/restart
-     real(dp) :: coeff      !! = 1.0, unless master is from Higher Pairs
-     real(dp) :: jVar(3)    !! Pos., vel., and accel. of the joint variable
-     real(dp) :: jVarPrev   !! Joint variable value at previous time step
-     real(dp), pointer :: F !! Pointer to reaction force or applied force
-     logical  :: saveVar(4) !! Flags indicating which variables should be saved
+     integer :: iMat    !< Which position matrix this DOF is associated with
+     integer :: lDOF    !< Which DOF (1-6) within the position matrix
+     integer :: sysDOF  !< System DOF number in SAM
+     integer :: ipMceq  !< Position of this master DOF in mceq
+     integer :: loadIdx !< Index to load/prescribed motion, if any
+     logical :: fixed   !< Is this dof fixed? Needed for save/restart
 
-     type(SpringBaseType), pointer :: spring
-     type(DamperBaseType), pointer :: damper
-     type(FrictionType)  , pointer :: friction
+     real(dp) :: coeff       !< = 1.0, unless master is from Higher Pairs
+     real(dp) :: jVar(3)     !< Pos., vel., and accel. of the joint variable
+     real(dp) :: jVarPrev(3) !< Joint variable values at previous time step
+     real(dp), pointer :: F  !< Pointer to reaction force or applied force
+     logical  :: saveVar(4)  !< Flags indicating which variables should be saved
+
+     type(SpringBaseType), pointer :: spring   !< Joint DOF spring
+     type(DamperBaseType), pointer :: damper   !< Joint DOF damper
+     type(FrictionType)  , pointer :: friction !< Joint DOF friction
   end type JointDofType
 
 
   type SliderType
-     type(GliderCurveType), pointer :: master   !! Glider curve definition
-     type(JointDofType)   , pointer :: slideDOF !! Slide DOF along master curve
-     real(dp)             , pointer :: coeff(:) !! Scaling of each master triad
-     real(dp) :: tangent(3) !! Unit tangent vector in slide direction
-     real(dp) :: rotGrad(3) !! Rate of rotation w.r.t. slide variable
-     real(dp) :: thickness  !! Thickness of cam domain in local x-direction
+     type(GliderCurveType), pointer :: master   !< Glider curve definition
+     type(JointDofType)   , pointer :: slideDOF !< Slide DOF along master curve
+     real(dp)             , pointer :: coeff(:) !< Scaling of each master triad
+     real(dp) :: tangent(3) !< Unit tangent vector in slide direction
+     real(dp) :: rotGrad(3) !< Rate of rotation w.r.t. slide variable
+     real(dp) :: thickness  !< Thickness of cam domain in local x-direction
   end type SliderType
 
 
   type MasterSlaveJointType
 
-     type(IdType) :: id       !! General identification data
+     type(IdType) :: id       !< General identification data
 
-     integer  :: type         !! The joint type
-     integer  :: version      !! Joint type version
-     integer  :: rotParam     !! Rotational parametrization type
-     integer  :: samNodNum    !! Node number for SAM reference (madof)
-     integer  :: nJointDOFs   !! Number of degrees of freedom in the joint
+     integer  :: type         !< The joint type
+     integer  :: version      !< Joint type version
+     integer  :: rotParam     !< Rotational parametrization type
+     integer  :: samNodNum    !< Node number for SAM reference (madof)
+     integer  :: nJointDOFs   !< Number of degrees of freedom in the joint
 
-     real(dp) :: JPosInG(3,4) !! Position of joint relative to the global system
+     real(dp) :: JPosInG(3,4) !< Position of joint relative to the global system
 
-     integer, pointer :: BC(:) ! 0 is fixed, 1 is free, 2 is fixed during
-     !                         ! initial static equilibrium iterations and
-     !                         ! eigenvalue calculations, and free otherwise
+     !> @brief Boundary condition codes for the joint DOFs.
+     !> @details BC(i) = 0 means DOF @a i is fixed, BC(i) = 1 means
+     !> DOF @a i is free, while BC(i) = 2 means DOF @a i is fixed during
+     !> initial static equilibrium iterations and eigenvalue analysis
+     integer, pointer :: BC(:) !< and free otherwise
 
-     type(TriadType), pointer :: STriad         !! The slave triad
+     type(TriadType), pointer :: STriad         !< The slave triad
      real(dp)                 :: STPos0InJ(3,4) !! Position of slave triad
      !                                          !! in joint system when all
      !                                          !! joint variables are zero
@@ -114,7 +117,7 @@ module MasterSlaveJointTypeModule
 
      type(JointDofType), pointer :: jointDOFs(:)
 
-     type(SliderType)  , pointer :: slider !! Data for multi-master joints only
+     type(SliderType)  , pointer :: slider !< Data for multi-master joints only
 
      type(MasterSlaveJointType), pointer :: chain !! If one of the master triads
      !                                            !! also is a slave this points
@@ -127,12 +130,12 @@ module MasterSlaveJointTypeModule
      !!TODO,bh: This should be removed or recoded (unused code/work in progress)
      type(FrictionType), pointer :: multiDofFriction !! For ball joints, etc.
 
-     integer :: nMats                         !! Number of intermediate matrices
+     integer :: nMats                         !< Number of intermediate matrices
      real(dp), pointer :: PosFromJVars(:,:,:) !! dim(3,4,nMats)
      real(dp), pointer :: thetaVec(:,:)       !! dim(3,nMats)
      integer , pointer :: numRot(:)           !! dim(nMats)
 
-     integer , pointer :: dofOutputOrder(:)   !! DOF-order on the frs-file
+     integer , pointer :: dofOutputOrder(:)   !< DOF-order on the frs-file
 
   end type MasterSlaveJointType
 
@@ -788,7 +791,7 @@ contains
     !! --- Logic section ---
 
     do j = 1, size(joint%jointDofs)
-       joint%jointDofs(j)%jVarPrev = joint%jointDofs(j)%jVar(1)
+       joint%jointDofs(j)%jVarPrev = joint%jointDofs(j)%jVar
     end do
 
     if (associated(joint%multiDofFriction)) then
@@ -818,7 +821,7 @@ contains
 
     !! Local variables
     integer  :: jDof, lDof, iMat
-    real(dp) :: jVar
+    real(dp) :: jVar(3)
 
     !! --- Logic section ---
 
@@ -826,11 +829,11 @@ contains
        jVar = joint%jointDofs(jDof)%jVarPrev
        lDof = joint%jointDofs(jDof)%lDof
        iMat = joint%jointDofs(jDof)%iMat
-       joint%jointDofs(jDof)%jVar(1) = jVar
+       joint%jointDofs(jDof)%jVar = jVar
        if (lDof <= 3) then
-          joint%PosFromJVars(lDof,4,iMat) = jVar
+          joint%PosFromJVars(lDof,4,iMat) = jVar(1)
        else if (lDof <= 6) then
-          joint%thetaVec(lDof-3,iMat) = jVar
+          joint%thetaVec(lDof-3,iMat) = jVar(1)
        end if
     end do
 

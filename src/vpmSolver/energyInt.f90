@@ -698,7 +698,7 @@ contains
        else if (associated(force%joint)) then
 
           uVec(1) = force%joint%jointDofs(force%dof)%jVar(1) &
-               &  - force%joint%jointDofs(force%dof)%jVarPrev
+               &  - force%joint%jointDofs(force%dof)%jVarPrev(1)
           ldof = 1
 
        else

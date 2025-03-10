@@ -714,8 +714,8 @@ contains
          !! Connect the spring length, velocity and acceleration
          !! to the corresponding joint variables
          jointDof%spring%length => jointDof%jVar(1)
-         jointDof%spring%velocity => jointDof%jVar(2)
-         jointDof%spring%acceleration => jointDof%jVar(3)
+         jointDof%spring%velocity => jointDof%jVarPrev(2)
+         jointDof%spring%acceleration => jointDof%jVarPrev(3)
 
       end if
       if (damperId > 0) then
