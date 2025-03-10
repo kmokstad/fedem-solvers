@@ -50,9 +50,9 @@ module EngineRoutinesModule
   !> @copydoc engineroutinesmodule::engines
   type(DamperBaseType), save, private, pointer :: dampers(:) => null()
 
-  real(dp), save, private :: dt    !< Time step size
-  real(dp), save, private :: beta  !< Newmark time integration parameter
-  real(dp), save, private :: gamma !< Newmark time integration parameter
+  real(dp), save, private :: dt    = 0.0_dp !< Time step size
+  real(dp), save, private :: beta  = 0.0_dp !< Newmark integration parameter
+  real(dp), save, private :: gamma = 0.0_dp !< Newmark integration parameter
 
   !> Flag used for consistent right-hand-side calculation in the predictor step.
   logical, save :: isPredictorStep = .false. !< Equals .true. in first iteration
@@ -228,7 +228,6 @@ contains
     use FunctionTypeModule     , only : FunctionValue
     use IdTypeModule           , only : getId
     use explicitFunctionsModule, only : dbgFunc
-    use reportErrorModule      , only : reportError, error_p
 
     type(EngineType) , intent(inout) :: engine
     integer          , intent(inout) :: ierr
@@ -247,20 +246,18 @@ contains
     eVal = 0.0_dp
     lerr = ierr
 
-    !! Check for infinite recursive engine loop
+    !! Check for infinite recursion
     do i = 1, topStack
        if (engine%id%baseId == callStack(i)) then
           ierr = ierr - 1
-          call reportError (error_p,'Infinite recursive loop for Engine'// &
-               &            getId(engine%id),addString='EngineValue')
+          call engineError ('Infinite recursive loop,')
           return
        end if
     end do
 
     if (topStack >= maxStack_p) then
        ierr = ierr - 1
-       call reportError (error_p,'Too many recursion levels detected for '// &
-            &            'Engine'//getId(engine%id),addString='EngineValue')
+       call engineError ('Too many recursion levels detected,')
        return
     end if
 
@@ -283,12 +280,11 @@ contains
     call EvalArgs (engine%args,nArg,iDer,xArg,x,ramp,ierr)
     if (ierr < lerr) then
        topStack = topStack - 1 ! Pop the call stack
-       call reportError (error_p,'Failed to evaluate arguments for engine'// &
-            &                    getId(engine%id),addString='EngineValue')
+       call engineError ('Failed to evaluate function arguments,')
        return
     end if
 
-    !! Define the engine value
+    !! Define the function value
     if (nArg > 1) then
        eVal = ramp * FunctionValue(engine%func,x(1:nArg),ierr)
     else
@@ -297,11 +293,20 @@ contains
     topStack = topStack - 1 ! Pop the call stack
 
     if (ierr < lerr) then
-       call reportError (error_p,'Failed to evaluate Engine'//getId(engine%id),&
-            &            addString='EngineValue')
+       call engineError ('Failed to evaluate')
     else if (dbgFunc > 0) then
        write(dbgFunc,"('Engine',A39,':',1PE12.5)") getId(engine%id),eVal
     end if
+
+  contains
+
+    !> @brief Prints an error message related to function evaluation.
+    subroutine engineError (msg)
+      use reportErrorModule, only : reportError, error_p
+      character(len=*), intent(in) :: msg
+      call reportError (error_p,msg//' Engine'//getId(engine%id), &
+           &            addString='EngineValue')
+    end subroutine engineError
 
   end function EngineValue
 
@@ -322,8 +327,6 @@ contains
 
     use kindModule        , only : dp
     use FunctionTypeModule, only : FunctionDerivative
-    use IdTypeModule      , only : getId
-    use reportErrorModule , only : reportError, error_p
 
     type(EngineType) , intent(inout) :: engine
     integer          , intent(inout) :: ierr
@@ -352,17 +355,16 @@ contains
     end if
     call EvalArgs (engine%args,nArg,iDer,tArg,x,ramp,ierr)
     if (ierr < lerr) then
-       call reportError (error_p,'Failed to evaluate arguments for engine'// &
-            &                    getId(engine%id),addString='EngineRate')
+       call engineError ('Failed to evaluate function arguments,')
        return
     else if (abs(ramp-1.0_dp) < 1.0e-15_dp) then
        ierr = ierr - 1
-       call reportError (error_p,'Time-derivative for ramped engines '// &
-            &                    'not yet implemented',addString='EngineRate')
+       call engineError ('Time-derivative for ramped functions '// &
+            &            'not yet implemented,')
        return
     end if
 
-    !! Define the engine rate value
+    !! Define the function rate value
     if (present(tArg)) then
        rVal = FunctionDerivative(engine%func,x(1),1,ierr)
     else if (nArg == 1 .and. associated(engine%args(1)%p)) then
@@ -378,9 +380,19 @@ contains
     end if
 
     if (ierr < lerr) then
-       call reportError (error_p,'Failed to evaluate derivative for Engine'// &
-            &                    getId(engine%id),addString='EngineRate')
+       call engineError ('Failed to evaluate function derivative,')
     end if
+
+  contains
+
+    !> @brief Prints an error message related to function evaluation.
+    subroutine engineError (msg)
+      use IdTypeModule     , only : getId
+      use reportErrorModule, only : reportError, error_p
+      character(len=*), intent(in) :: msg
+      call reportError (error_p,msg//' Engine'//getId(engine%id), &
+           &            addString='EngineRate')
+    end subroutine engineError
 
   end function EngineRate
 
@@ -873,13 +885,16 @@ contains
     use SpringTypeModule , only : checkYieldLimits, springForce, springStiff
     use IdTypeModule     , only : getId
     use reportErrorModule, only : reportError, error_p
+#ifdef FT_DEBUG
+    use dbgUnitsModule   , only : dbgSolve
+#endif
 
     type(SpringBaseType), intent(inout) :: spr
     integer             , intent(inout) :: ierr
 
     !! Local variables
-    integer  :: lerr
-    real(dp) :: scale, dis, vel, acc
+    integer  :: lerr, sMotionType
+    real(dp) :: scale, delta, vel, acc
 
     !! --- Logic section ---
 
@@ -893,38 +908,63 @@ contains
     end if
 
     lerr = ierr
-    dis  = spr%length0
 
-    !! Get the engine value for the stress free length
-    if (associated(spr%length0Engine)) then
+    !! Get function value for the stress free length change
+    sMotionType = spr%motionType
+    if (sMotionType > 0 .and. dt <= 1.0e-15_dp) then
+       !! Set length change to zero during initial equilibirum iterations (dt=0)
+       !! when stress-free velocity or acceleration is prescribed
+       spr%length0 = spr%length
+       sMotionType = 0
+    else if (associated(spr%length0Engine)) then
        spr%length0 = spr%l0 + spr%l1 * EngineValue(spr%length0Engine,ierr)
     else
        spr%length0 = spr%l0
     end if
     if (ierr < lerr) then
        call reportError (error_p,'Failed to evaluate stress-free length '// &
-            &                    'engine for Spring'//getId(spr%id), &
+            &                    'change function for Spring'//getId(spr%id), &
             &            addString='UpdateSpringBase')
        return
     end if
 
-    if (spr%motionType > 0) then
-       dis = spr%length0 - dis
+    if (sMotionType > 0) then
        vel = spr%velocity
        acc = spr%acceleration
+       delta = spr%length0 - spr%L0val(2)
+       spr%L0val(1) = spr%length0
     end if
 
     !! Evaluate the spring deflection
-    select case (spr%motionType)
+    select case (sMotionType)
     case (1) ! Stress-free velocity is given, integrate deflection
-       spr%deflection = (vel + acc*dt*(0.5_dp-beta/gamma) + dis*beta/gamma)*dt
-       spr%length0    = spr%length + spr%deflection
+       delta = (vel + acc*dt*(0.5_dp-beta/gamma) + delta*beta/gamma)*dt
+       spr%length0 = spr%length0Prev + delta
+       spr%deflection = spr%length - spr%length0
+       !spr%deflection = spr%deflectionPrev + delta
     case (2) ! Stress-free acceleration is given, integrate deflection
-       spr%deflection = (vel + acc*dt*0.5_dp + dis*dt*beta)*dt
-       spr%length0    = spr%length + spr%deflection
-    case default ! Stress-free length is given, calculate deflection
+       delta = (vel + acc*dt*0.5_dp + delta*dt*beta)*dt
+       spr%length0 = spr%length0Prev + delta
+       spr%deflection = spr%length - spr%length0
+       !spr%deflection = spr%deflectionPrev + delta
+       !spr%length0 = spr%length + spr%deflection
+    case default ! Stress-free length change is given, calculate deflection
        spr%deflection = spr%length - spr%length0
     end select
+
+#ifdef FT_DEBUG
+    if (dbgSolve > 0) then
+       write(dbgSolve,"(/'   --- in updateSpringBase')")
+       write(dbgSolve,"(7X,'Spring',A,', DOF =',I6,' :')") &
+            trim(getId(spr%id)), spr%dof
+       if (sMotionType > 0) then
+          write(dbgSolve,"(7X,'delta, vel, acc = ',1P3E13.5)") delta, vel, acc
+          write(dbgSolve,"(7X,'dt, beta, gamma = ',3F8.4)") dt, beta, gamma
+       end if
+       write(dbgSolve,"(7X,'L, L0, deflection = ',1P3E13.5)") &
+            spr%length, spr%length0, spr%deflection
+    end if
+#endif
 
     !! Evaluate the spring force and stiffness
     spr%force     = springForce(spr,spr%deflection-spr%yieldDeflection,ierr)
@@ -948,7 +988,7 @@ contains
 
     if (ierr < lerr) then
        call reportError (error_p,'Failed to evaluate stiffness scaling '// &
-            &                    'engine for Spring'//getId(spr%id), &
+            &                    'function for Spring'//getId(spr%id), &
             &            addString='UpdateSpringBase')
        return
     else
@@ -1026,7 +1066,7 @@ contains
 
     if (ierr < lerr) then
        call reportError (error_p,'Failed to evaluate damper-coefficient '// &
-            &                    'scaling engine for Damper'//getId(dmp%id), &
+            &                    'scaling function for Damper'//getId(dmp%id), &
             &            addString='UpdateDamperBase')
     else
        dmp%coeff = dmp%coeff*scale
@@ -1037,7 +1077,7 @@ contains
 
 
   !!============================================================================
-  !> @brief Update all engines and store the values for saving.
+  !> @brief Update all general functions and store their values for saving.
   !>
   !> @param engines All general functions in the model
   !> @param[in] eFlag Update the functions whose @a saveVar equals this value

@@ -41,7 +41,7 @@ module SpringTypeModule
      logical  :: active !< Yield limit activation flag
      real(dp) :: ysf(2) !< Yield limit scaling factors
      type(EngineType), pointer :: engine !< Function for varying yield limit
-     real(dp) :: yieldLimit !< Current yield limit, = ysf(1) + ysf(2)*engine
+     real(dp) :: yieldLimit !< Current yield limit, = ysf(1) + ysf(2) * #engine
   end type YieldLimitType
 
 
@@ -88,14 +88,16 @@ module SpringTypeModule
      !> If @a motionType &gt; 0 the stress-free length is calculated using
      integer :: motionType !< the Newmark update formulas.
 
-     !> Stress-free length function
+     !> @brief Stress-free length change function.
      type(EngineType), pointer :: length0Engine
      real(dp) :: l0 !< Constant stress-free length value
      real(dp) :: l1 !< Scaling factor for stress-free length function
 
      !> @brief Current stress-free length
-     !> @details The stress-free length equals l0 + l1*length0Function
+     !> @details The stress-free length equals #l0 + #l1 * #length0engine
      real(dp) :: length0
+     real(dp) :: length0Prev !< Previous stress-free length
+     real(dp) :: L0val(2) !< Current and previous value of #length0engine
 
      !> Stiffness-deflection function
      type(FunctionType), pointer :: stiffnessFunction
@@ -106,9 +108,9 @@ module SpringTypeModule
 
      !> @brief Current spring stiffness.
      !> @details The spring stiffness equals either s0 + s1*stiffnessFunction,
-     !> or s0 + s1*d(forceFunction)/dx where @a s0 is a stiffness coefficient
-     !> both for @a stiffnessFunction and @a forceFunction, i.e.,
-     !> if @a forceFunction is constant the @a s0 value represents a stiffness
+     !> or s0 + s1*d(forceFunction)/dx where #s0 is a stiffness coefficient
+     !> both for #stiffnessfunction and #forcefunction, i.e.,
+     !> if the #forcefunction is constant the #s0 value represents a stiffness.
      real(dp) :: stiffness
 
      !> Optional scaling of stiffness for positive deflection
@@ -128,7 +130,7 @@ module SpringTypeModule
      !> @details For joint springs, this pointer points to the
      !> corresponding joint variable. For axial springs it is allocated.
      real(dp), pointer :: length
-     logical :: allocatedLength !< Set to .true. if the @a length is allocated
+     logical :: allocatedLength !< Set to .true. if the #length is allocated
 
      real(dp), pointer :: velocity     !< Current spring deflection velocity
      real(dp), pointer :: acceleration !< Current spring deflection acceleration
@@ -493,7 +495,8 @@ contains
           if (associated(spr%length)) then
              write(io,*) 'length       =', spr%length
           end if
-          write(io,*) 'length0      =', spr%length0
+          write(io,*) 'length0      =', spr%length0, spr%length0Prev
+          write(io,*) 'L0val        =', spr%L0val
           write(io,*) 'deflection   =', spr%deflection
           write(io,*) 'yDeflection  =', spr%yieldDeflection
           if (associated(spr%velocity)) then
@@ -729,6 +732,8 @@ contains
 
     spr%stiffness      = 0.0_dp
     spr%length0        = 0.0_dp
+    spr%length0Prev    = 0.0_dp
+    spr%L0val          = 0.0_dp
     spr%l0             = 0.0_dp
     spr%l1             = 0.0_dp
     spr%s0             = 0.0_dp
@@ -1198,9 +1203,11 @@ contains
     !! --- Logic section ---
 
     spr%lengthPrev          = spr%length
+    spr%length0Prev         = spr%length0
     spr%deflectionPrev      = spr%deflection
     spr%yieldDeflectionPrev = spr%yieldDeflection
     spr%forcePrev           = spr%force
+    spr%L0val(2)            = spr%L0val(1)
 
   end subroutine updatePreviousValues
 
@@ -1223,9 +1230,11 @@ contains
     !! --- Logic section ---
 
     spr%length          = spr%lengthPrev
+    spr%length0         = spr%length0Prev
     spr%deflection      = spr%deflectionPrev
     spr%yieldDeflection = spr%yieldDeflectionPrev
     spr%force           = spr%forcePrev
+    spr%L0val(1)        = spr%L0val(2)
 
   end subroutine restorePreviousValues
 
