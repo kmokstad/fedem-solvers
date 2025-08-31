@@ -64,8 +64,8 @@ jobs:
       - name: Push updated solver documentation
         if: env.NEW_DOC != 0
         run: |
-          git commit -m"Update solver source code documentation"
-          git push origin HEAD
+          echo "Update solver source code documentation"
+          git diff HEAD
 
       - name: Check build status for fedempy documentation
         run: |
@@ -81,5 +81,5 @@ jobs:
       - name: Push updated fedempy documentation
         if: env.NEW_DOC != 0
         run: |
-          git commit -m"Update fedempy documentation"
-          git push origin HEAD
+          echo "Update fedempy documentation"
+          git diff HEAD
