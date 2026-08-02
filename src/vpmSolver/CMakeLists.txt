@@ -178,6 +178,9 @@ if ( USE_CONCURRENT_RECOVERY )
                      ../vpmStress/strainRosetteModule
                      dummyResStressModule
     )
+  if ( NOT ( BUILD_SOLVER_AS_DLL AND BUILD_DUMMY_SUPEL_DLL ) )
+    list ( APPEND REC_FILE_LIST dummyLoadStrainRosette )
+  endif ( NOT ( BUILD_SOLVER_AS_DLL AND BUILD_DUMMY_SUPEL_DLL ) )
 endif ( USE_CONCURRENT_RECOVERY )
 
 
@@ -265,7 +268,7 @@ add_library ( ${LIB_ID}_C ${CPP_SOURCE_FILES} ${CPP_HEADER_FILES} )
 if ( BUILD_SOLVER_AS_DLL )
   add_library ( ${DLL_ID} SHARED solverInterface.C solverInterface.h )
   if ( BUILD_DUMMY_SUPEL_DLL )
-    add_library ( vpmSupEls SHARED dummyLoadSupelMatrix.f90 )
+    add_library ( vpmSupEls SHARED dummyLoadSupelMatrix.f90 dummyLoadStrainRosette.f90 )
     list ( INSERT DEPENDENCY_LIST 0 vpmSupEls )
   endif ( BUILD_DUMMY_SUPEL_DLL )
 else ( BUILD_SOLVER_AS_DLL )
