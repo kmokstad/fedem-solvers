@@ -37,8 +37,32 @@
 //! \brief Convenience macro.
 #define ADDOPTION FFaCmdLineArg::instance()->addOption
 
-//! \brief Previous working directory, to return to after finished.
-static char* oldwd = NULL;
+
+namespace
+{
+  char* oldwd = NULL; //!< Previous working directory, change to after finished
+
+  /*!
+    \brief Changes the current working directory of the solver process.
+  */
+
+  bool chwdir (const std::string& program, std::string& cwd)
+  {
+    oldwd = getcwd(NULL,128);
+    FFaFilePath::checkName (cwd);
+    if (chdir(cwd.c_str()))
+    {
+      // Invalid directory, abort...
+      free(oldwd);
+      perror((program + ": " + cwd).c_str());
+      return false;
+    }
+#ifdef FT_DEBUG
+    std::cout <<"Executing in "<< cwd << std::endl;
+#endif
+    return true;
+  }
+}
 
 
 /*!
@@ -103,21 +127,8 @@ void readOptionFilesStd (const char* program)
   // Change the working directory, if specified
   std::string cwd;
   FFaCmdLineArg::instance()->getValue ("cwd",cwd);
-  if (!cwd.empty())
-  {
-    oldwd = getcwd(NULL,128);
-    FFaFilePath::checkName (cwd);
-    if (chdir(cwd.c_str()))
-    {
-      // Invalid directory, abort...
-      perror((program + (": " + cwd)).c_str());
-      free(oldwd);
-      exit(1);
-    }
-#ifdef FT_DEBUG
-    std::cout <<"Executing in "<< cwd << std::endl;
-#endif
-  }
+  if (!cwd.empty() && !chwdir(program,cwd))
+    exit(1);
 
   // Read the options files, if any
   std::string optfile;
@@ -175,8 +186,7 @@ void readOptionFilesStd (const char* program)
   }
 
   // Check for expiration (for internal releases)
-  int expired = FedemAdmin::getExpireAfter();
-  if (expired > 0)
+  if (int expired = FedemAdmin::getExpireAfter(); expired > 0)
   {
     std::cout << program <<" version "<< fedem_version <<" "<< build_date
               <<"\n\n";
@@ -192,4 +202,9 @@ void readOptionFilesStd (const char* program)
       std::cout <<"*** This is an internal (non-public) version that will "
                 <<" expire in "<< expired-myAge <<" days ***"<< std::endl;
   }
+
+  // Change the working directory, if specified in one of the option files
+  FFaCmdLineArg::instance()->getValue ("cwd",optfile);
+  if (optfile != cwd && !chwdir(program,optfile))
+    exit(1);
 }
