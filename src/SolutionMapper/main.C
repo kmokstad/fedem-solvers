@@ -543,16 +543,13 @@ bool writeSubModel (std::string& subFile, FFlLinkHandler*& model, IntVec& nodes)
     name.append("_ext");
   subFile = name + ".ftl";
 
-  FFaAppInfo current;
-  std::vector<std::string> meta(4);
-  meta[0] = "Fedem version: " + current.version;
-  meta[1] = "Created by solution mapping utility, with external node status";
-  meta[2] = "This file: " + subFile;
-  meta[3] = "Written by: " + current.user + ", " + current.date;
-
   std::cout <<"\nWriting "<< subFile << std::endl;
   FFlFedemWriter writer(model);
-  return writer.write(subFile,true,true,meta);
+  return writer.write(subFile, true, true, {
+    "Fedem version: " + FFaAppInfo::getVersion(),
+    "Created by solution mapping utility, with external node status",
+    "This file: " + subFile,
+    "Written by: " + FFaAppInfo::getUser() + ", " + FFaAppInfo::getDate() });
 }
 
 
